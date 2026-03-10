@@ -47,6 +47,7 @@ const (
 	KEY_O          = 24
 	KEY_P          = 25
 	KEY_ENTER      = 28
+	KEY_LEFTCTRL   = 29
 	KEY_A          = 30
 	KEY_S          = 31
 	KEY_D          = 32
@@ -65,6 +66,7 @@ const (
 	KEY_N          = 49
 	KEY_M          = 50
 	KEY_RIGHTSHIFT = 54
+	KEY_LEFTALT    = 56
 	KEY_SPACE      = 57
 	KEY_CAPSLOCK   = 58
 	KEY_TAB        = 15
@@ -344,6 +346,7 @@ type Daemon struct {
 	uinputFd *os.File
 	korean   bool
 	shifted  bool
+	ctrl_or_alt bool
 	hangul   HangulState
 	patcher  *KeymapPatcher
 	lastChar rune // 현재 디스크에 패치된 문자 (0=원본)
@@ -663,13 +666,31 @@ func (d *Daemon) handleBackspace() {
 }
 
 func (d *Daemon) handleEvent(ev InputEvent) {
-	if ev.Type == EV_KEY && (ev.Code == KEY_LEFTSHIFT || ev.Code == KEY_RIGHTSHIFT) {
+	if ev.Type != EV_KEY {
+		d.passthrough(ev)
+		return
+	}
+	// Shift 상태 체크	
+	if ev.Code == KEY_LEFTSHIFT || ev.Code == KEY_RIGHTSHIFT {
 		d.shifted = (ev.Value != keyRelease)
 		d.passthrough(ev)
 		return
 	}
+	// Ctrl Alt 상태 체크
+	if ev.Code == KEY_LEFTCTRL || ev.Code == KEY_LEFTALT {
+		if ev.Value == keyPress {
+			d.ctrl_or_alt = true
+			d.commitCurrent()  // 한글 조합 중이면 확정
+			d.restoreKeymap()
+		} else if ev.Value == keyRelease {
+			d.ctrl_or_alt = false
+		}
+		d.passthrough(ev)
+		return
+	}
 
-	if ev.Type == EV_KEY && ev.Code == KEY_CAPSLOCK {
+	// CapsLock 한영 모드 전환
+	if ev.Code == KEY_CAPSLOCK {
 		if ev.Value == keyPress {
 			d.commitCurrent()
 			d.restoreKeymap()
@@ -683,11 +704,13 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 		return
 	}
 
-	if ev.Type != EV_KEY {
-		d.passthrough(ev)
-		return
-	}
+	// Ctrl or Alt가 눌린 동안은 무조건 우회
+	if d.ctrl_or_alt {
+        d.passthrough(ev)
+        return
+    }
 
+	// 영문 모드면 그대로 전달
 	if !d.korean {
 		d.passthrough(ev)
 		return
