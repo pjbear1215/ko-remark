@@ -83,6 +83,12 @@ const (
 	BUS_USB = 0x03
 )
 
+const (
+	maxKeyCode    = KEY_CAPSLOCK
+	invalidIndex8 = int8(-1)
+	debugLogging  = false
+)
+
 // uinput 구조체
 type UinputSetup struct {
 	ID           InputID
@@ -95,6 +101,34 @@ type InputID struct {
 	Vendor  uint16
 	Product uint16
 	Version uint16
+}
+
+type keyIndexPair struct {
+	code  uint16
+	value int8
+}
+
+type jongSplit struct {
+	first  int8
+	second int8
+	ok     bool
+}
+
+func makeKeyIndexTable(pairs ...keyIndexPair) [maxKeyCode + 1]int8 {
+	var table [maxKeyCode + 1]int8
+	for i := range table {
+		table[i] = invalidIndex8
+	}
+	for _, pair := range pairs {
+		table[pair.code] = pair.value
+	}
+	return table
+}
+
+func debugf(format string, args ...any) {
+	if debugLogging {
+		log.Printf(format, args...)
+	}
 }
 
 // 키맵 디스크 패칭: libepaper.so의 KEY_Q 엔트리를 직접 수정
@@ -224,16 +258,16 @@ func (kp *KeymapPatcher) writeToDisk(unicode uint16, qtcode uint32) error {
 	}
 	defer f.Close()
 
-	uniBuf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(uniBuf, unicode)
-	qtBuf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(qtBuf, qtcode)
+	var uniBuf [2]byte
+	binary.LittleEndian.PutUint16(uniBuf[:], unicode)
+	var qtBuf [4]byte
+	binary.LittleEndian.PutUint32(qtBuf[:], qtcode)
 
 	for _, fOff := range kp.fileOffsets {
-		if _, err := f.WriteAt(uniBuf, fOff+2); err != nil {
+		if _, err := f.WriteAt(uniBuf[:], fOff+2); err != nil {
 			return fmt.Errorf("write unicode at 0x%x: %w", fOff+2, err)
 		}
-		if _, err := f.WriteAt(qtBuf, fOff+4); err != nil {
+		if _, err := f.WriteAt(qtBuf[:], fOff+4); err != nil {
 			return fmt.Errorf("write qtcode at 0x%x: %w", fOff+4, err)
 		}
 	}
@@ -249,54 +283,47 @@ func (kp *KeymapPatcher) restoreDisk() {
 }
 
 // 두벌식 자판 매핑
-var choseongMap = map[uint16]int{
-	KEY_R: 0, KEY_E: 3, KEY_Q: 7, KEY_T: 9, KEY_D: 11,
-	KEY_W: 12, KEY_Z: 15, KEY_X: 16, KEY_C: 14, KEY_V: 17,
-	KEY_G: 18, KEY_A: 6, KEY_S: 2, KEY_F: 5,
-}
+var choseongMap = makeKeyIndexTable(
+	keyIndexPair{KEY_R, 0}, keyIndexPair{KEY_E, 3}, keyIndexPair{KEY_Q, 7},
+	keyIndexPair{KEY_T, 9}, keyIndexPair{KEY_D, 11}, keyIndexPair{KEY_W, 12},
+	keyIndexPair{KEY_Z, 15}, keyIndexPair{KEY_X, 16}, keyIndexPair{KEY_C, 14},
+	keyIndexPair{KEY_V, 17}, keyIndexPair{KEY_G, 18}, keyIndexPair{KEY_A, 6},
+	keyIndexPair{KEY_S, 2}, keyIndexPair{KEY_F, 5},
+)
 
-var choseongShiftMap = map[uint16]int{
-	KEY_R: 1, KEY_E: 4, KEY_Q: 8, KEY_T: 10, KEY_W: 13,
-}
+var choseongShiftMap = makeKeyIndexTable(
+	keyIndexPair{KEY_R, 1}, keyIndexPair{KEY_E, 4}, keyIndexPair{KEY_Q, 8},
+	keyIndexPair{KEY_T, 10}, keyIndexPair{KEY_W, 13},
+)
 
-var jungseongMap = map[uint16]int{
-	KEY_K: 0, KEY_O: 1, KEY_I: 2, KEY_J: 4, KEY_P: 5,
-	KEY_U: 6, KEY_H: 8, KEY_Y: 12, KEY_N: 13, KEY_B: 17,
-	KEY_M: 18, KEY_L: 20,
-}
+var jungseongMap = makeKeyIndexTable(
+	keyIndexPair{KEY_K, 0}, keyIndexPair{KEY_O, 1}, keyIndexPair{KEY_I, 2},
+	keyIndexPair{KEY_J, 4}, keyIndexPair{KEY_P, 5}, keyIndexPair{KEY_U, 6},
+	keyIndexPair{KEY_H, 8}, keyIndexPair{KEY_Y, 12}, keyIndexPair{KEY_N, 13},
+	keyIndexPair{KEY_B, 17}, keyIndexPair{KEY_M, 18}, keyIndexPair{KEY_L, 20},
+)
 
-var jungseongShiftMap = map[uint16]int{
-	KEY_O: 3, KEY_P: 7,
-}
+var jungseongShiftMap = makeKeyIndexTable(
+	keyIndexPair{KEY_O, 3}, keyIndexPair{KEY_P, 7},
+)
 
-var jongseongMap = map[uint16]int{
-	KEY_R: 1, KEY_S: 4, KEY_E: 7, KEY_F: 8, KEY_A: 16,
-	KEY_Q: 17, KEY_T: 19, KEY_D: 21, KEY_W: 22, KEY_C: 23,
-	KEY_Z: 24, KEY_X: 25, KEY_V: 26, KEY_G: 27,
-}
+var jongseongMap = makeKeyIndexTable(
+	keyIndexPair{KEY_R, 1}, keyIndexPair{KEY_S, 4}, keyIndexPair{KEY_E, 7},
+	keyIndexPair{KEY_F, 8}, keyIndexPair{KEY_A, 16}, keyIndexPair{KEY_Q, 17},
+	keyIndexPair{KEY_T, 19}, keyIndexPair{KEY_D, 21}, keyIndexPair{KEY_W, 22},
+	keyIndexPair{KEY_C, 23}, keyIndexPair{KEY_Z, 24}, keyIndexPair{KEY_X, 25},
+	keyIndexPair{KEY_V, 26}, keyIndexPair{KEY_G, 27},
+)
 
-var jongseongShiftMap = map[uint16]int{
-	KEY_T: 20,
-}
+var jongseongShiftMap = makeKeyIndexTable(
+	keyIndexPair{KEY_T, 20},
+)
 
-var jongseongToChoseong = map[int]int{
-	1: 0, 4: 2, 7: 3, 8: 5, 16: 6, 17: 7,
-	19: 9, 20: 10, 21: 11, 22: 12, 23: 14,
+var jongseongToChoseong = [28]int8{
+	0: invalidIndex8, 1: 0, 2: invalidIndex8, 3: invalidIndex8, 4: 2, 5: invalidIndex8, 6: invalidIndex8, 7: 3,
+	8: 5, 9: invalidIndex8, 10: invalidIndex8, 11: invalidIndex8, 12: invalidIndex8, 13: invalidIndex8, 14: invalidIndex8, 15: invalidIndex8,
+	16: 6, 17: 7, 18: invalidIndex8, 19: 9, 20: 10, 21: 11, 22: 12, 23: 14,
 	24: 15, 25: 16, 26: 17, 27: 18,
-}
-
-var compoundJongseong = map[[2]int]int{
-	{1, 19}: 3, {4, 22}: 5, {4, 27}: 6,
-	{8, 1}: 9, {8, 16}: 10, {8, 17}: 11,
-	{8, 19}: 12, {8, 25}: 13, {8, 26}: 14,
-	{8, 27}: 15, {17, 19}: 18,
-}
-
-var compoundJongseongSplit = map[int][2]int{
-	3: {1, 19}, 5: {4, 22}, 6: {4, 27},
-	9: {8, 1}, 10: {8, 16}, 11: {8, 17},
-	12: {8, 19}, 13: {8, 25}, 14: {8, 26},
-	15: {8, 27}, 18: {17, 19},
 }
 
 var choseongToJamo = []rune{
@@ -316,15 +343,82 @@ func composeSyllable(cho, jung, jong int) rune {
 }
 
 func getCompoundJungseong(first, second int) int {
-	compounds := map[[2]int]int{
-		{8, 0}: 9, {8, 1}: 10, {8, 20}: 11,
-		{13, 4}: 14, {13, 5}: 15, {13, 20}: 16,
-		{18, 20}: 19,
+	switch {
+	case first == 8 && second == 0:
+		return 9
+	case first == 8 && second == 1:
+		return 10
+	case first == 8 && second == 20:
+		return 11
+	case first == 13 && second == 4:
+		return 14
+	case first == 13 && second == 5:
+		return 15
+	case first == 13 && second == 20:
+		return 16
+	case first == 18 && second == 20:
+		return 19
+	default:
+		return -1
 	}
-	if idx, ok := compounds[[2]int{first, second}]; ok {
-		return idx
+}
+
+func getCompoundJongseong(first, second int) int {
+	switch {
+	case first == 1 && second == 19:
+		return 3
+	case first == 4 && second == 22:
+		return 5
+	case first == 4 && second == 27:
+		return 6
+	case first == 8 && second == 1:
+		return 9
+	case first == 8 && second == 16:
+		return 10
+	case first == 8 && second == 17:
+		return 11
+	case first == 8 && second == 19:
+		return 12
+	case first == 8 && second == 25:
+		return 13
+	case first == 8 && second == 26:
+		return 14
+	case first == 8 && second == 27:
+		return 15
+	case first == 17 && second == 19:
+		return 18
+	default:
+		return -1
 	}
-	return -1
+}
+
+func splitCompoundJongseong(jong int) jongSplit {
+	switch jong {
+	case 3:
+		return jongSplit{1, 19, true}
+	case 5:
+		return jongSplit{4, 22, true}
+	case 6:
+		return jongSplit{4, 27, true}
+	case 9:
+		return jongSplit{8, 1, true}
+	case 10:
+		return jongSplit{8, 16, true}
+	case 11:
+		return jongSplit{8, 17, true}
+	case 12:
+		return jongSplit{8, 19, true}
+	case 13:
+		return jongSplit{8, 25, true}
+	case 14:
+		return jongSplit{8, 26, true}
+	case 15:
+		return jongSplit{8, 27, true}
+	case 18:
+		return jongSplit{17, 19, true}
+	default:
+		return jongSplit{}
+	}
 }
 
 const (
@@ -420,14 +514,14 @@ func (d *Daemon) recreateUinput() error {
 }
 
 func (d *Daemon) writeEvent(typ uint16, code uint16, value int32) error {
-	buf := make([]byte, inputEventSize)
+	var buf [inputEventSize]byte
 	binary.LittleEndian.PutUint64(buf[0:8], 0)
 	binary.LittleEndian.PutUint64(buf[8:16], 0)
 	binary.LittleEndian.PutUint16(buf[16:18], typ)
 	binary.LittleEndian.PutUint16(buf[18:20], code)
 	binary.LittleEndian.PutUint32(buf[20:24], uint32(value))
 	fd := int(d.uinputFd.Fd())
-	_, err := syscall.Write(fd, buf)
+	_, err := syscall.Write(fd, buf[:])
 	return err
 }
 
@@ -475,7 +569,7 @@ func (d *Daemon) outputChar(char rune, backspaces int) {
 			return
 		}
 		d.lastChar = char
-		log.Printf("[OUTPUT] U+%04X (%c) 로드 완료 (디바이스 재생성)", char, char)
+		debugf("[OUTPUT] U+%04X (%c) 로드 완료 (디바이스 재생성)", char, char)
 	}
 
 	for i := 0; i < backspaces; i++ {
@@ -526,35 +620,35 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 	isJungseong := false
 
 	if d.shifted {
-		if idx, ok := choseongShiftMap[keyCode]; ok {
+		if idx := choseongShiftMap[keyCode]; idx != invalidIndex8 {
 			isChoseong = true
-			choIdx = idx
-		} else if idx, ok := jungseongShiftMap[keyCode]; ok {
+			choIdx = int(idx)
+		} else if idx := jungseongShiftMap[keyCode]; idx != invalidIndex8 {
 			isJungseong = true
-			jungIdx = idx
-		} else if idx, ok := choseongMap[keyCode]; ok {
+			jungIdx = int(idx)
+		} else if idx := choseongMap[keyCode]; idx != invalidIndex8 {
 			isChoseong = true
-			choIdx = idx
-		} else if idx, ok := jungseongMap[keyCode]; ok {
+			choIdx = int(idx)
+		} else if idx := jungseongMap[keyCode]; idx != invalidIndex8 {
 			isJungseong = true
-			jungIdx = idx
+			jungIdx = int(idx)
 		}
 		if isChoseong {
-			if idx, ok := jongseongShiftMap[keyCode]; ok {
-				jongIdx = idx
+			if idx := jongseongShiftMap[keyCode]; idx != invalidIndex8 {
+				jongIdx = int(idx)
 			}
 		}
 	} else {
-		if idx, ok := choseongMap[keyCode]; ok {
+		if idx := choseongMap[keyCode]; idx != invalidIndex8 {
 			isChoseong = true
-			choIdx = idx
-			if idx2, ok := jongseongMap[keyCode]; ok {
-				jongIdx = idx2
+			choIdx = int(idx)
+			if idx2 := jongseongMap[keyCode]; idx2 != invalidIndex8 {
+				jongIdx = int(idx2)
 			}
 		}
-		if idx, ok := jungseongMap[keyCode]; ok {
+		if idx := jungseongMap[keyCode]; idx != invalidIndex8 {
 			isJungseong = true
-			jungIdx = idx
+			jungIdx = int(idx)
 		}
 	}
 
@@ -608,16 +702,16 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 
 	case stateJongseong:
 		if isJungseong {
-			if split, ok := compoundJongseongSplit[d.hangul.jong]; ok {
-				newCho := jongseongToChoseong[split[1]]
-				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, split[0]), 1)
+			if split := splitCompoundJongseong(d.hangul.jong); split.ok {
+				newCho := int(jongseongToChoseong[split.second])
+				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, int(split.first)), 1)
 				d.hangul.cho = newCho
 				d.hangul.jung = jungIdx
 				d.hangul.jong = 0
 				d.hangul.state = stateJungseong
 				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 0)
 			} else {
-				newCho := jongseongToChoseong[d.hangul.jong]
+				newCho := int(jongseongToChoseong[d.hangul.jong])
 				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 1)
 				d.hangul.cho = newCho
 				d.hangul.jung = jungIdx
@@ -626,8 +720,7 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 0)
 			}
 		} else if isChoseong && jongIdx >= 0 {
-			compound, ok := compoundJongseong[[2]int{d.hangul.jong, jongIdx}]
-			if ok {
+			if compound := getCompoundJongseong(d.hangul.jong, jongIdx); compound >= 0 {
 				d.hangul.jong = compound
 				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong), 1)
 			} else {
@@ -648,8 +741,8 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 func (d *Daemon) handleBackspace() {
 	switch d.hangul.state {
 	case stateJongseong:
-		if split, ok := compoundJongseongSplit[d.hangul.jong]; ok {
-			d.hangul.jong = split[0]
+		if split := splitCompoundJongseong(d.hangul.jong); split.ok {
+			d.hangul.jong = int(split.first)
 			d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong), 1)
 		} else {
 			d.hangul.jong = 0
@@ -670,7 +763,7 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 		d.passthrough(ev)
 		return
 	}
-	// Shift 상태 체크	
+	// Shift 상태 체크
 	if ev.Code == KEY_LEFTSHIFT || ev.Code == KEY_RIGHTSHIFT {
 		d.shifted = (ev.Value != keyRelease)
 		d.passthrough(ev)
@@ -680,7 +773,7 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	if ev.Code == KEY_LEFTCTRL || ev.Code == KEY_LEFTALT {
 		if ev.Value == keyPress {
 			d.ctrl_or_alt = true
-			d.commitCurrent()  // 한글 조합 중이면 확정
+			d.commitCurrent() // 한글 조합 중이면 확정
 			d.restoreKeymap()
 		} else if ev.Value == keyRelease {
 			d.ctrl_or_alt = false
@@ -706,9 +799,9 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 
 	// Ctrl or Alt가 눌린 동안은 무조건 우회
 	if d.ctrl_or_alt {
-        d.passthrough(ev)
-        return
-    }
+		d.passthrough(ev)
+		return
+	}
 
 	// 영문 모드면 그대로 전달
 	if !d.korean {
@@ -911,10 +1004,10 @@ func (d *Daemon) run(devicePath string) error {
 
 func (d *Daemon) eventLoop() error {
 	fd := int(d.inputFd.Fd())
-	buf := make([]byte, inputEventSize)
+	var buf [inputEventSize]byte
 	eventCount := 0
 	for {
-		n, err := syscall.Read(fd, buf)
+		n, err := syscall.Read(fd, buf[:])
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}
@@ -923,14 +1016,12 @@ func (d *Daemon) eventLoop() error {
 		}
 
 		var ev InputEvent
-		ev.Time.Sec = int64(binary.LittleEndian.Uint64(buf[0:8]))
-		ev.Time.Usec = int64(binary.LittleEndian.Uint64(buf[8:16]))
 		ev.Type = binary.LittleEndian.Uint16(buf[16:18])
 		ev.Code = binary.LittleEndian.Uint16(buf[18:20])
 		ev.Value = int32(binary.LittleEndian.Uint32(buf[20:24]))
 
 		eventCount++
-		if eventCount <= 10 || ev.Type == EV_KEY {
+		if debugLogging && (eventCount <= 10 || ev.Type == EV_KEY) {
 			log.Printf("[EVT] #%d type=%d code=%d val=%d", eventCount, ev.Type, ev.Code, ev.Value)
 		}
 

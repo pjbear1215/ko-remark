@@ -24,17 +24,15 @@ extern int open(const char *pathname, int flags, ...);
 extern long write(int fd, const void *buf, unsigned long count);
 extern int close(int fd);
 
+#ifndef HANGUL_HOOK_ENABLE_LOG
+#define HANGUL_HOOK_ENABLE_LOG 0
+#endif
+
 typedef struct { void *d; uint16_t *ptr; int64_t size; } QString6;
 
 /* ── malloc via dlsym ── */
 typedef void *(*malloc_t)(size_t);
 static malloc_t real_malloc = NULL;
-
-static void *get_malloc(void) {
-    if (!real_malloc)
-        real_malloc = (malloc_t)dlsym(RTLD_NEXT, "malloc");
-    return (void *)real_malloc;
-}
 
 /* ── Event memory offsets (confirmed by v7c diagnostic) ── */
 #define OFF_REPLACE_START  88
@@ -123,7 +121,8 @@ struct QStrHeap {
 };
 
 static void make_qstr_heap(QString6 *out, uint16_t *text, int len) {
-    get_malloc();
+    if (!real_malloc)
+        real_malloc = (malloc_t)dlsym(RTLD_NEXT, "malloc");
     if (!real_malloc) return;
 
     struct QStrHeap *h = (struct QStrHeap *)real_malloc(sizeof(struct QStrHeap));
@@ -143,6 +142,7 @@ static void make_qstr_heap(QString6 *out, uint16_t *text, int len) {
 }
 
 /* ── Logging ── */
+#if HANGUL_HOOK_ENABLE_LOG
 static char logbuf[4096];
 static int logpos = 0;
 static int logcount = 0;
@@ -164,6 +164,7 @@ static void flush_log(void) {
     if (fd >= 0) { write(fd, logbuf, logpos); close(fd); }
     logpos = 0;
 }
+#endif
 
 /* ── Original function ── */
 typedef void (*orig_scs_t)(void*, const void*, int, int);
@@ -204,7 +205,7 @@ void _ZN17QInputMethodEvent15setCommitStringERK7QStringii(
         return;
     }
 
-    /* log */
+#if HANGUL_HOOK_ENABLE_LOG
     if (logcount < 500) {
         logcount++;
         log_str("S["); log_int(logcount); log_str("]");
@@ -213,6 +214,7 @@ void _ZN17QInputMethodEvent15setCommitStringERK7QStringii(
         log_str(" st="); log_int(state);
         log_nl(); flush_log();
     }
+#endif
 
     /* ── Backspace (empty commit) ── */
     if (cs->size == 0) {
