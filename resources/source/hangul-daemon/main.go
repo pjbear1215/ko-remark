@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -84,9 +86,15 @@ const (
 )
 
 const (
-	maxKeyCode    = KEY_CAPSLOCK
-	invalidIndex8 = int8(-1)
-	debugLogging  = false
+	maxKeyCode             = KEY_CAPSLOCK
+	invalidIndex8          = int8(-1)
+	debugLogging           = false
+	minPreviewInterval     = 35 * time.Millisecond
+	maxPreviewInterval     = 120 * time.Millisecond
+	minIdleFlushDelay      = 100 * time.Millisecond
+	maxIdleFlushDelay      = 260 * time.Millisecond
+	adaptiveMinKeyGap      = 40 * time.Millisecond
+	adaptiveMaxKeyGap      = 400 * time.Millisecond
 )
 
 // uinput 구조체
@@ -363,6 +371,27 @@ func getCompoundJungseong(first, second int) int {
 	}
 }
 
+func splitCompoundJungseong(jung int) jongSplit {
+	switch jung {
+	case 9:
+		return jongSplit{8, 0, true}
+	case 10:
+		return jongSplit{8, 1, true}
+	case 11:
+		return jongSplit{8, 20, true}
+	case 14:
+		return jongSplit{13, 4, true}
+	case 15:
+		return jongSplit{13, 5, true}
+	case 16:
+		return jongSplit{13, 20, true}
+	case 19:
+		return jongSplit{18, 20, true}
+	default:
+		return jongSplit{}
+	}
+}
+
 func getCompoundJongseong(first, second int) int {
 	switch {
 	case first == 1 && second == 19:
@@ -436,14 +465,21 @@ type HangulState struct {
 }
 
 type Daemon struct {
-	inputFd  *os.File
-	uinputFd *os.File
-	korean   bool
-	shifted  bool
-	ctrl_or_alt bool
-	hangul   HangulState
-	patcher  *KeymapPatcher
-	lastChar rune // 현재 디스크에 패치된 문자 (0=원본)
+	mu             sync.Mutex
+	inputFd        *os.File
+	uinputFd       *os.File
+	korean         bool
+	shifted        bool
+	ctrl_or_alt    bool
+	pendingVisible bool
+	visibleChar    rune
+	lastPreviewAt  time.Time
+	lastTypingAt   time.Time
+	lastKeyGap     time.Duration
+	hangul         HangulState
+	patcher        *KeymapPatcher
+	lastChar       rune // 현재 디스크에 패치된 문자 (0=원본)
+	idleFlushSeq   uint64
 }
 
 func ioctl(fd uintptr, request uintptr, arg uintptr) error {
@@ -539,6 +575,14 @@ func (d *Daemon) sendKeyTap(code uint16) {
 	d.sendKey(code, false)
 }
 
+func (d *Daemon) sendKeySequence(codes ...uint16) {
+	for _, code := range codes {
+		_ = d.writeEvent(EV_KEY, code, keyPress)
+		_ = d.writeEvent(EV_KEY, code, keyRelease)
+	}
+	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+}
+
 func (d *Daemon) sendBackspace() {
 	d.sendKeyTap(KEY_BACKSPACE)
 	time.Sleep(1 * time.Millisecond)
@@ -553,7 +597,7 @@ func (d *Daemon) passthrough(ev InputEvent) {
 // 2. uinput 디바이스 재생성 (xochitl이 패치된 키맵으로 새 핸들러 생성)
 // 3. 백스페이스 전송 (필요 시)
 // 4. KEY_Q 전송 → xochitl이 패치된 문자로 표시
-func (d *Daemon) outputChar(char rune, backspaces int) {
+func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 	if d.patcher == nil {
 		log.Printf("[OUTPUT] 패처 미초기화")
 		return
@@ -570,6 +614,11 @@ func (d *Daemon) outputChar(char rune, backspaces int) {
 		}
 		d.lastChar = char
 		debugf("[OUTPUT] U+%04X (%c) 로드 완료 (디바이스 재생성)", char, char)
+	}
+
+	if batchReplace && backspaces == 1 {
+		d.sendKeySequence(KEY_BACKSPACE, KEY_Q)
+		return
 	}
 
 	for i := 0; i < backspaces; i++ {
@@ -594,11 +643,149 @@ func (d *Daemon) restoreKeymap() {
 	}
 }
 
+func (d *Daemon) cancelIdleFlush() {
+	atomic.AddUint64(&d.idleFlushSeq, 1)
+}
+
+func adaptiveDelay(gap, minGap, maxGap, fastValue, slowValue time.Duration) time.Duration {
+	if gap <= minGap {
+		return fastValue
+	}
+	if gap >= maxGap {
+		return slowValue
+	}
+	span := int64(maxGap - minGap)
+	offset := int64(gap - minGap)
+	fast := int64(fastValue)
+	slow := int64(slowValue)
+	return time.Duration(fast + (slow-fast)*offset/span)
+}
+
+func (d *Daemon) updateTypingCadence() {
+	now := time.Now()
+	if d.lastTypingAt.IsZero() {
+		d.lastKeyGap = adaptiveMaxKeyGap
+	} else {
+		d.lastKeyGap = now.Sub(d.lastTypingAt)
+	}
+	d.lastTypingAt = now
+}
+
+func (d *Daemon) currentPreviewInterval() time.Duration {
+	return adaptiveDelay(d.lastKeyGap, adaptiveMinKeyGap, adaptiveMaxKeyGap, maxPreviewInterval, minPreviewInterval)
+}
+
+func (d *Daemon) currentIdleFlushDelay() time.Duration {
+	return adaptiveDelay(d.lastKeyGap, adaptiveMinKeyGap, adaptiveMaxKeyGap, maxIdleFlushDelay, minIdleFlushDelay)
+}
+
+func (d *Daemon) currentPendingChar() (rune, bool) {
+	switch d.hangul.state {
+	case stateChoseong:
+		return choseongToJamo[d.hangul.cho], true
+	case stateJungseong:
+		return composeSyllable(d.hangul.cho, d.hangul.jung, 0), true
+	case stateJongseong:
+		return composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong), true
+	default:
+		return 0, false
+	}
+}
+
+func (d *Daemon) showPending() {
+	char, ok := d.currentPendingChar()
+	if !ok {
+		return
+	}
+	if d.pendingVisible && d.visibleChar == char {
+		return
+	}
+	d.commitPendingChar(char)
+}
+
+func (d *Daemon) maybePreviewCurrent() {
+	char, ok := d.currentPendingChar()
+	if !ok {
+		return
+	}
+	previewInterval := d.currentPreviewInterval()
+	if !d.pendingVisible {
+		if d.lastPreviewAt.IsZero() || time.Since(d.lastPreviewAt) >= previewInterval {
+			d.commitPendingChar(char)
+		} else {
+			d.scheduleIdleFlush()
+		}
+		return
+	}
+	if d.visibleChar == char {
+		d.scheduleIdleFlush()
+		return
+	}
+	if time.Since(d.lastPreviewAt) >= previewInterval {
+		d.commitPendingChar(char)
+	} else {
+		d.scheduleIdleFlush()
+	}
+}
+
+func (d *Daemon) scheduleIdleFlush() {
+	if d.hangul.state == stateEmpty {
+		return
+	}
+	seq := atomic.AddUint64(&d.idleFlushSeq, 1)
+	delay := d.currentIdleFlushDelay()
+	go func(expected uint64, delay time.Duration) {
+		time.Sleep(delay)
+		if atomic.LoadUint64(&d.idleFlushSeq) != expected {
+			return
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if atomic.LoadUint64(&d.idleFlushSeq) != expected {
+			return
+		}
+		if d.hangul.state == stateEmpty {
+			return
+		}
+		d.showPending()
+	}(seq, delay)
+}
+
 func (d *Daemon) resetCompose() {
+	d.cancelIdleFlush()
 	d.hangul = HangulState{}
+	d.pendingVisible = false
+	d.visibleChar = 0
+}
+
+func (d *Daemon) commitPendingChar(char rune) {
+	backspaces := 0
+	if d.pendingVisible {
+		backspaces = 1
+	}
+	d.outputChar(char, backspaces, true)
+	d.pendingVisible = true
+	d.visibleChar = char
+	d.lastPreviewAt = time.Now()
+}
+
+func (d *Daemon) renderBackspaceStep(char rune) {
+	backspaces := 0
+	if d.pendingVisible {
+		backspaces = 1
+	}
+	d.outputChar(char, backspaces, false)
+	d.pendingVisible = true
+	d.visibleChar = char
+	d.lastPreviewAt = time.Now()
 }
 
 func (d *Daemon) commitCurrent() {
+	if char, ok := d.currentPendingChar(); ok {
+		if !d.pendingVisible || d.visibleChar != char {
+			d.commitPendingChar(char)
+		}
+	}
 	d.resetCompose()
 }
 
@@ -612,6 +799,8 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 	if !pressed {
 		return
 	}
+
+	d.updateTypingCadence()
 
 	choIdx := -1
 	jungIdx := -1
@@ -663,9 +852,10 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 		if isChoseong {
 			d.hangul.cho = choIdx
 			d.hangul.state = stateChoseong
-			d.outputChar(choseongToJamo[choIdx], 0)
+			d.pendingVisible = false
+			d.maybePreviewCurrent()
 		} else if isJungseong {
-			d.outputChar(jungseongToJamo[jungIdx], 0)
+			d.outputChar(jungseongToJamo[jungIdx], 0, false)
 			d.resetCompose()
 		}
 
@@ -673,67 +863,78 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 		if isJungseong {
 			d.hangul.jung = jungIdx
 			d.hangul.state = stateJungseong
-			d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 1)
+			d.maybePreviewCurrent()
 		} else if isChoseong {
+			d.renderBackspaceStep(choseongToJamo[d.hangul.cho])
 			d.hangul.cho = choIdx
-			d.outputChar(choseongToJamo[choIdx], 0)
+			d.hangul.state = stateChoseong
+			d.pendingVisible = false
+			d.maybePreviewCurrent()
 		}
 
 	case stateJungseong:
 		if isChoseong && jongIdx >= 0 {
 			d.hangul.jong = jongIdx
 			d.hangul.state = stateJongseong
-			d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong), 1)
+			d.scheduleIdleFlush()
 		} else if isJungseong {
 			compoundJung := getCompoundJungseong(d.hangul.jung, jungIdx)
 			if compoundJung >= 0 {
 				d.hangul.jung = compoundJung
-				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 1)
+				d.maybePreviewCurrent()
 			} else {
+				d.commitCurrent()
+				d.outputChar(jungseongToJamo[jungIdx], 0, false)
 				d.resetCompose()
-				d.outputChar(jungseongToJamo[jungIdx], 0)
 			}
 		} else if isChoseong {
-			d.resetCompose()
+			d.commitCurrent()
 			d.hangul.cho = choIdx
 			d.hangul.state = stateChoseong
-			d.outputChar(choseongToJamo[choIdx], 0)
+			d.pendingVisible = false
+			d.maybePreviewCurrent()
 		}
 
 	case stateJongseong:
 		if isJungseong {
 			if split := splitCompoundJongseong(d.hangul.jong); split.ok {
 				newCho := int(jongseongToChoseong[split.second])
-				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, int(split.first)), 1)
+				d.hangul.jong = int(split.first)
+				d.commitCurrent()
 				d.hangul.cho = newCho
 				d.hangul.jung = jungIdx
 				d.hangul.jong = 0
 				d.hangul.state = stateJungseong
-				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 0)
+				d.pendingVisible = false
+				d.maybePreviewCurrent()
 			} else {
 				newCho := int(jongseongToChoseong[d.hangul.jong])
-				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 1)
+				d.hangul.jong = 0
+				d.commitCurrent()
 				d.hangul.cho = newCho
 				d.hangul.jung = jungIdx
 				d.hangul.jong = 0
 				d.hangul.state = stateJungseong
-				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 0)
+				d.pendingVisible = false
+				d.maybePreviewCurrent()
 			}
 		} else if isChoseong && jongIdx >= 0 {
 			if compound := getCompoundJongseong(d.hangul.jong, jongIdx); compound >= 0 {
 				d.hangul.jong = compound
-				d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong), 1)
+				d.scheduleIdleFlush()
 			} else {
-				d.resetCompose()
+				d.commitCurrent()
 				d.hangul.cho = choIdx
 				d.hangul.state = stateChoseong
-				d.outputChar(choseongToJamo[choIdx], 0)
+				d.pendingVisible = false
+				d.maybePreviewCurrent()
 			}
 		} else if isChoseong {
-			d.resetCompose()
+			d.commitCurrent()
 			d.hangul.cho = choIdx
 			d.hangul.state = stateChoseong
-			d.outputChar(choseongToJamo[choIdx], 0)
+			d.pendingVisible = false
+			d.maybePreviewCurrent()
 		}
 	}
 }
@@ -743,17 +944,24 @@ func (d *Daemon) handleBackspace() {
 	case stateJongseong:
 		if split := splitCompoundJongseong(d.hangul.jong); split.ok {
 			d.hangul.jong = int(split.first)
-			d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong), 1)
 		} else {
 			d.hangul.jong = 0
 			d.hangul.state = stateJungseong
-			d.outputChar(composeSyllable(d.hangul.cho, d.hangul.jung, 0), 1)
 		}
+		d.renderBackspaceStep(composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong))
 	case stateJungseong:
-		d.hangul.state = stateChoseong
-		d.outputChar(choseongToJamo[d.hangul.cho], 1)
+		if split := splitCompoundJungseong(d.hangul.jung); split.ok {
+			d.hangul.jung = int(split.first)
+			d.renderBackspaceStep(composeSyllable(d.hangul.cho, d.hangul.jung, 0))
+		} else {
+			d.hangul.jung = 0
+			d.hangul.state = stateChoseong
+			d.renderBackspaceStep(choseongToJamo[d.hangul.cho])
+		}
 	case stateChoseong:
-		d.sendBackspace()
+		if d.pendingVisible {
+			d.sendBackspace()
+		}
 		d.resetCompose()
 	}
 }
@@ -1025,11 +1233,15 @@ func (d *Daemon) eventLoop() error {
 			log.Printf("[EVT] #%d type=%d code=%d val=%d", eventCount, ev.Type, ev.Code, ev.Value)
 		}
 
+		d.mu.Lock()
 		d.handleEvent(ev)
+		d.mu.Unlock()
 	}
 }
 
 func (d *Daemon) cleanup() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.closeInput()
 	if d.uinputFd != nil {
 		_ = ioctl(d.uinputFd.Fd(), UI_DEV_DESTROY, 0)
