@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -111,7 +112,9 @@ const (
 	invalidIndex8          = int8(-1)
 	debugLogging           = false
 	enableMultiDeviceProbe = false
-	enableAlphaEntryProbe  = true
+	enableAlphaEntryProbe  = false
+	enableDeviceCapacityProbe = true
+	deviceCapacityProbeMax    = 24
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
@@ -1533,6 +1536,94 @@ func waitForKeyboard() string {
 	}
 }
 
+func readStatusField(pid int, field string) string {
+	if pid <= 0 {
+		return "n/a"
+	}
+	f, err := os.Open(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return "n/a"
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	prefix := field + ":"
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return "n/a"
+}
+
+func readMemAvailable() string {
+	f, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return "n/a"
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "MemAvailable:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "MemAvailable:"))
+		}
+	}
+	return "n/a"
+}
+
+func logProcessMemory(tag string, pid int, name string) {
+	log.Printf("[CAPMEM] %s %s pid=%d VmRSS=%s VmSize=%s", tag, name, pid, readStatusField(pid, "VmRSS"), readStatusField(pid, "VmSize"))
+}
+
+func (d *Daemon) logCapacityMemory(tag string) {
+	xochitlPID, err := findXochitlPID()
+	if err != nil {
+		xochitlPID = 0
+	}
+	log.Printf("[CAPMEM] %s MemAvailable=%s", tag, readMemAvailable())
+	logProcessMemory(tag, os.Getpid(), "hangul-daemon")
+	if xochitlPID > 0 {
+		logProcessMemory(tag, xochitlPID, "xochitl")
+	} else {
+		log.Printf("[CAPMEM] %s xochitl pid unavailable", tag)
+	}
+}
+
+func (d *Daemon) runDeviceCapacityProbe() error {
+	log.Printf("[CAP] device capacity probe start (max=%d)", deviceCapacityProbeMax)
+	d.logCapacityMemory("before")
+	devices := make([]*os.File, 0, deviceCapacityProbeMax)
+	defer func() {
+		for i := len(devices) - 1; i >= 0; i-- {
+			_ = ioctl(devices[i].Fd(), UI_DEV_DESTROY, 0)
+			devices[i].Close()
+		}
+		log.Printf("[CAP] device capacity probe cleanup complete (%d devices)", len(devices))
+		time.Sleep(150 * time.Millisecond)
+		d.logCapacityMemory("after_cleanup")
+	}()
+
+	for i := 0; i < deviceCapacityProbeMax; i++ {
+		name := fmt.Sprintf("Hangul Capacity %02d", i)
+		f, err := createUinputDevice(name)
+		if err != nil {
+			log.Printf("[CAP] create failed at index=%d: %v", i, err)
+			d.logCapacityMemory("create_failed")
+			return nil
+		}
+		devices = append(devices, f)
+		log.Printf("[CAP] created device index=%d name=%s", i, name)
+		time.Sleep(40 * time.Millisecond)
+	}
+
+	d.logCapacityMemory("after_create")
+	log.Printf("[CAP] reached configured max=%d without create failure", len(devices))
+	return nil
+}
+
 func (d *Daemon) runMultiDeviceProbe() error {
 	if d.patcher == nil {
 		return fmt.Errorf("patcher not initialized")
@@ -1593,6 +1684,11 @@ func (d *Daemon) run(devicePath string) error {
 	if enableMultiDeviceProbe {
 		if err := d.runMultiDeviceProbe(); err != nil {
 			return fmt.Errorf("multi-device probe: %w", err)
+		}
+	}
+	if enableDeviceCapacityProbe {
+		if err := d.runDeviceCapacityProbe(); err != nil {
+			return fmt.Errorf("device capacity probe: %w", err)
 		}
 	}
 
