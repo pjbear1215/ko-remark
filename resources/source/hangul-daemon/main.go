@@ -113,8 +113,9 @@ const (
 	debugLogging           = false
 	enableMultiDeviceProbe = false
 	enableAlphaEntryProbe  = false
-	enableDeviceCapacityProbe = true
+	enableDeviceCapacityProbe = false
 	deviceCapacityProbeMax    = 24
+	enablePerCharCache       = false
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
@@ -238,6 +239,8 @@ var preloadedMappedChars = []rune{
 	0x314A, 0x314B, 0x314C, 0x314D, 0x314E, 0x314F, 0x3150, 0x3151, 0x3153,
 	0x3154, 0x3155, 0x3157, 0x315B, 0x315C, 0x3160, 0x3161, 0x3163,
 }
+
+const preloadedTargetSentence = "안녕하세요. 이상하네요. 감사합니다."
 
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
@@ -490,6 +493,74 @@ func (kp *KeymapPatcher) probeEntries(specs []keyPatchSpec) {
 			log.Printf("[ALPHA]   %s[%d] fileOffset=0x%x", keyCodeName(spec.code), i, off)
 		}
 	}
+}
+
+func allPlainKeyPatchSpecs() []keyPatchSpec {
+	specs := make([]keyPatchSpec, 0, len(alphaKeyPatchSpecs)+len(extraKeyPatchSpecs))
+	specs = append(specs, alphaKeyPatchSpecs...)
+	specs = append(specs, extraKeyPatchSpecs...)
+	return specs
+}
+
+func orderedUniqueRunes(s string) []rune {
+	seen := make(map[rune]struct{})
+	result := make([]rune, 0, len([]rune(s)))
+	for _, r := range s {
+		if r == ' ' || r == '
+' || r == '	' {
+			continue
+		}
+		if _, ok := seen[r]; ok {
+			continue
+		}
+		seen[r] = struct{}{}
+		result = append(result, r)
+	}
+	return result
+}
+
+func (d *Daemon) setupPreloadedKeyboard(target string) error {
+	chars := orderedUniqueRunes(target)
+	specs := allPlainKeyPatchSpecs()
+	if len(chars) == 0 {
+		return nil
+	}
+	if len(chars) > len(specs) {
+		return fmt.Errorf("target sentence chars=%d exceeds available keys=%d", len(chars), len(specs))
+	}
+
+	charToKey := make(map[rune]uint16, len(chars))
+	usedCodes := make([]uint16, 0, len(chars))
+	for i, char := range chars {
+		code := specs[i].code
+		if err := d.patcher.writeKeyToDisk(code, uint16(char), uint32(char)); err != nil {
+			for _, used := range usedCodes {
+				_ = d.patcher.restoreKey(used)
+			}
+			return fmt.Errorf("preload write %s for U+%04X: %w", keyCodeName(code), char, err)
+		}
+		charToKey[char] = code
+		usedCodes = append(usedCodes, code)
+		log.Printf("[PRELOAD] %s => U+%04X (%c)", keyCodeName(code), char, char)
+	}
+
+	f, err := createUinputDevice("Hangul Preloaded Keyboard")
+	if err != nil {
+		for _, used := range usedCodes {
+			_ = d.patcher.restoreKey(used)
+		}
+		return fmt.Errorf("create preloaded keyboard: %w", err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	for _, used := range usedCodes {
+		if err := d.patcher.restoreKey(used); err != nil {
+			log.Printf("[PRELOAD] restore %s failed: %v", keyCodeName(used), err)
+		}
+	}
+
+	d.preloadedKeyboard = mappedKeyboard{fd: f, charToKey: charToKey}
+	log.Printf("[PRELOAD] device ready for target sentence chars=%d text=%q", len(chars), target)
+	return nil
 }
 
 func (kp *KeymapPatcher) writeKeyToDisk(code uint16, unicode uint16, qtcode uint32) error {
@@ -745,11 +816,12 @@ type cachedKeyboard struct {
 }
 
 type Daemon struct {
-	mu             sync.Mutex
-	inputFd        *os.File
-	uinputFd       *os.File
+	mu              sync.Mutex
+	inputFd         *os.File
+	uinputFd        *os.File
+	preloadedKeyboard mappedKeyboard
 	cachedKeyboards [2]cachedKeyboard
-	korean         bool
+	korean          bool
 	shifted        bool
 	ctrl_or_alt    bool
 	pendingVisible bool
@@ -958,20 +1030,40 @@ func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 		return
 	}
 
-	if target := d.cachedOrProvisionedKeyboard(char); target != nil {
-		if batchReplace && backspaces == 1 {
-			d.sendKeySequenceOn(target, KEY_BACKSPACE, KEY_Q)
-		} else {
-			for i := 0; i < backspaces; i++ {
-				d.sendKeyTapOn(target, KEY_BACKSPACE)
+	if d.preloadedKeyboard.fd != nil {
+		if code, ok := d.preloadedKeyboard.charToKey[char]; ok {
+			if batchReplace && backspaces == 1 {
+				d.sendKeySequenceOn(d.preloadedKeyboard.fd, KEY_BACKSPACE, code)
+			} else {
+				for i := 0; i < backspaces; i++ {
+					d.sendKeyTapOn(d.preloadedKeyboard.fd, KEY_BACKSPACE)
+				}
+				if backspaces > 0 {
+					time.Sleep(2 * time.Millisecond)
+				}
+				d.sendKeyTapOn(d.preloadedKeyboard.fd, code)
 			}
-			if backspaces > 0 {
-				time.Sleep(2 * time.Millisecond)
-			}
-			d.sendKeyTapOn(target, KEY_Q)
+			d.lastChar = char
+			return
 		}
-		d.lastChar = char
-		return
+	}
+
+	if enablePerCharCache {
+		if target := d.cachedOrProvisionedKeyboard(char); target != nil {
+			if batchReplace && backspaces == 1 {
+				d.sendKeySequenceOn(target, KEY_BACKSPACE, KEY_Q)
+			} else {
+				for i := 0; i < backspaces; i++ {
+					d.sendKeyTapOn(target, KEY_BACKSPACE)
+				}
+				if backspaces > 0 {
+					time.Sleep(2 * time.Millisecond)
+				}
+				d.sendKeyTapOn(target, KEY_Q)
+			}
+			d.lastChar = char
+			return
+		}
 	}
 
 	if char != d.lastChar {
@@ -1702,6 +1794,10 @@ func (d *Daemon) run(devicePath string) error {
 		log.Println("[ALPHA] alpha entry probe complete")
 	}
 
+	if err := d.setupPreloadedKeyboard(preloadedTargetSentence); err != nil {
+		log.Printf("경고: preloaded keyboard setup 실패 (%v)", err)
+	}
+
 	// 초기 uinput 디바이스 생성
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("setup uinput: %w", err)
@@ -1769,6 +1865,11 @@ func (d *Daemon) cleanup() {
 	if d.uinputFd != nil {
 		_ = ioctl(d.uinputFd.Fd(), UI_DEV_DESTROY, 0)
 		d.uinputFd.Close()
+	}
+	if d.preloadedKeyboard.fd != nil {
+		_ = ioctl(d.preloadedKeyboard.fd.Fd(), UI_DEV_DESTROY, 0)
+		d.preloadedKeyboard.fd.Close()
+		d.preloadedKeyboard = mappedKeyboard{}
 	}
 	for i := range d.cachedKeyboards {
 		if d.cachedKeyboards[i].fd != nil {
