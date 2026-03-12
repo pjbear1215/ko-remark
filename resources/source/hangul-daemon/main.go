@@ -90,6 +90,7 @@ const (
 	invalidIndex8          = int8(-1)
 	debugLogging           = false
 	enableMultiDeviceProbe = false
+	enableAlphaEntryProbe  = true
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
@@ -144,11 +145,63 @@ func debugf(format string, args ...any) {
 // xochitl은 새 evdev 디바이스 감지 시 핸들러를 생성하며,
 // 이때 디스크의 키맵 데이터를 읽어 내부 조회 테이블을 구축함
 // → 디바이스를 재생성하면 패치된 키맵이 적용됨
+type keyPatchInfo struct {
+	fileOffsets []int64
+	origUnicode uint16
+	origQtcode  uint32
+}
+
+type keyPatchSpec struct {
+	code    uint16
+	unicode uint16
+	qtcode  uint32
+	mod     byte
+}
+
+type mappedKeyboard struct {
+	fd        *os.File
+	charToKey map[rune]uint16
+}
+
 type KeymapPatcher struct {
 	fileOffsets []int64 // KEY_Q 엔트리의 파일 오프셋 목록
 	diskPath    string  // libepaper.so 디스크 경로
 	origUnicode uint16
 	origQtcode  uint32
+	keyEntries  map[uint16]keyPatchInfo
+}
+
+func signatureForKeyEntry(code uint16, unicode uint16, qtcode uint32, mod byte) []byte {
+	var sig [9]byte
+	binary.LittleEndian.PutUint16(sig[0:2], code)
+	binary.LittleEndian.PutUint16(sig[2:4], unicode)
+	binary.LittleEndian.PutUint32(sig[4:8], qtcode)
+	sig[8] = mod
+	return sig[:]
+}
+
+var alphaKeyPatchSpecs = []keyPatchSpec{
+	{KEY_Q, 'q', 'Q', 0}, {KEY_W, 'w', 'W', 0}, {KEY_E, 'e', 'E', 0},
+	{KEY_R, 'r', 'R', 0}, {KEY_T, 't', 'T', 0}, {KEY_Y, 'y', 'Y', 0},
+	{KEY_U, 'u', 'U', 0}, {KEY_I, 'i', 'I', 0}, {KEY_O, 'o', 'O', 0},
+	{KEY_P, 'p', 'P', 0}, {KEY_A, 'a', 'A', 0}, {KEY_S, 's', 'S', 0},
+	{KEY_D, 'd', 'D', 0}, {KEY_F, 'f', 'F', 0}, {KEY_G, 'g', 'G', 0},
+	{KEY_H, 'h', 'H', 0}, {KEY_J, 'j', 'J', 0}, {KEY_K, 'k', 'K', 0},
+	{KEY_L, 'l', 'L', 0}, {KEY_Z, 'z', 'Z', 0}, {KEY_X, 'x', 'X', 0},
+	{KEY_C, 'c', 'C', 0}, {KEY_V, 'v', 'V', 0}, {KEY_B, 'b', 'B', 0},
+	{KEY_N, 'n', 'N', 0}, {KEY_M, 'm', 'M', 0},
+}
+
+var alphaMappedKeyCodes = []uint16{
+	KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y, KEY_U, KEY_I, KEY_O, KEY_P,
+	KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_H, KEY_J, KEY_K, KEY_L,
+	KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B, KEY_N, KEY_M,
+}
+
+var preloadedMappedChars = []rune{
+	0x3131, 0x3134, 0x3137, 0x3139, 0x3141, 0x3142, 0x3145, 0x3147, 0x3148,
+	0x314A, 0x314B, 0x314C, 0x314D, 0x314E, 0x314F, 0x3150, 0x3151, 0x3153,
+	0x3154, 0x3155, 0x3157, 0x315B, 0x315C, 0x3160, 0x3161, 0x3163,
 }
 
 func copyFile(src, dst string) error {
@@ -258,6 +311,150 @@ func searchFileForSignature(path string, signature []byte) []int64 {
 		}
 	}
 	return offsets
+}
+
+func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
+	if kp.keyEntries == nil {
+		kp.keyEntries = make(map[uint16]keyPatchInfo)
+	}
+	if _, ok := kp.keyEntries[spec.code]; ok {
+		return nil
+	}
+	signature := signatureForKeyEntry(spec.code, spec.unicode, spec.qtcode, spec.mod)
+	offsets := searchFileForSignature(kp.diskPath, signature)
+	if len(offsets) == 0 {
+		return fmt.Errorf("key entry not found: code=%d unicode=U+%04X qt=0x%08x mod=%d", spec.code, spec.unicode, spec.qtcode, spec.mod)
+	}
+	kp.keyEntries[spec.code] = keyPatchInfo{
+		fileOffsets: offsets,
+		origUnicode: spec.unicode,
+		origQtcode:  spec.qtcode,
+	}
+	return nil
+}
+
+func (kp *KeymapPatcher) initAlphaEntries() error {
+	for _, spec := range alphaKeyPatchSpecs {
+		if err := kp.initKeyEntry(spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func keyCodeName(code uint16) string {
+	switch code {
+	case KEY_Q:
+		return "KEY_Q"
+	case KEY_W:
+		return "KEY_W"
+	case KEY_E:
+		return "KEY_E"
+	case KEY_R:
+		return "KEY_R"
+	case KEY_T:
+		return "KEY_T"
+	case KEY_Y:
+		return "KEY_Y"
+	case KEY_U:
+		return "KEY_U"
+	case KEY_I:
+		return "KEY_I"
+	case KEY_O:
+		return "KEY_O"
+	case KEY_P:
+		return "KEY_P"
+	case KEY_A:
+		return "KEY_A"
+	case KEY_S:
+		return "KEY_S"
+	case KEY_D:
+		return "KEY_D"
+	case KEY_F:
+		return "KEY_F"
+	case KEY_G:
+		return "KEY_G"
+	case KEY_H:
+		return "KEY_H"
+	case KEY_J:
+		return "KEY_J"
+	case KEY_K:
+		return "KEY_K"
+	case KEY_L:
+		return "KEY_L"
+	case KEY_Z:
+		return "KEY_Z"
+	case KEY_X:
+		return "KEY_X"
+	case KEY_C:
+		return "KEY_C"
+	case KEY_V:
+		return "KEY_V"
+	case KEY_B:
+		return "KEY_B"
+	case KEY_N:
+		return "KEY_N"
+	case KEY_M:
+		return "KEY_M"
+	default:
+		return fmt.Sprintf("KEY_%d", code)
+	}
+}
+
+func (kp *KeymapPatcher) logAlphaEntries() {
+	for _, spec := range alphaKeyPatchSpecs {
+		info, ok := kp.keyEntries[spec.code]
+		if !ok {
+			log.Printf("[ALPHA] %s missing", keyCodeName(spec.code))
+			continue
+		}
+		log.Printf("[ALPHA] %s offsets=%d unicode=U+%04X qt=0x%08X", keyCodeName(spec.code), len(info.fileOffsets), info.origUnicode, info.origQtcode)
+		for i, off := range info.fileOffsets {
+			log.Printf("[ALPHA]   %s[%d] fileOffset=0x%x", keyCodeName(spec.code), i, off)
+		}
+	}
+}
+
+func (kp *KeymapPatcher) writeKeyToDisk(code uint16, unicode uint16, qtcode uint32) error {
+	info, ok := kp.keyEntries[code]
+	if !ok {
+		if code == KEY_Q {
+			return kp.writeToDisk(unicode, qtcode)
+		}
+		return fmt.Errorf("key entry not initialized: code=%d", code)
+	}
+	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open %s for write: %w", kp.diskPath, err)
+	}
+	defer f.Close()
+
+	var uniBuf [2]byte
+	binary.LittleEndian.PutUint16(uniBuf[:], unicode)
+	var qtBuf [4]byte
+	binary.LittleEndian.PutUint32(qtBuf[:], qtcode)
+
+	for _, fOff := range info.fileOffsets {
+		if _, err := f.WriteAt(uniBuf[:], fOff+2); err != nil {
+			return fmt.Errorf("write unicode at 0x%x: %w", fOff+2, err)
+		}
+		if _, err := f.WriteAt(qtBuf[:], fOff+4); err != nil {
+			return fmt.Errorf("write qtcode at 0x%x: %w", fOff+4, err)
+		}
+	}
+	return nil
+}
+
+func (kp *KeymapPatcher) restoreKey(code uint16) error {
+	info, ok := kp.keyEntries[code]
+	if !ok {
+		if code == KEY_Q {
+			kp.restoreDisk()
+			return nil
+		}
+		return fmt.Errorf("key entry not initialized: code=%d", code)
+	}
+	return kp.writeKeyToDisk(code, info.origUnicode, info.origQtcode)
 }
 
 func (kp *KeymapPatcher) writeToDisk(unicode uint16, qtcode uint32) error {
@@ -1323,6 +1520,15 @@ func (d *Daemon) run(devicePath string) error {
 		if err := d.runMultiDeviceProbe(); err != nil {
 			return fmt.Errorf("multi-device probe: %w", err)
 		}
+	}
+
+	// 다음 단계용 기반: 여러 알파벳 키 엔트리를 찾아 둘 수 있는지 확인
+	if err := d.patcher.initAlphaEntries(); err != nil {
+		log.Printf("경고: 알파 엔트리 초기화 실패 (%v)", err)
+	} else if enableAlphaEntryProbe {
+		log.Println("[ALPHA] alpha entry probe start")
+		d.patcher.logAlphaEntries()
+		log.Println("[ALPHA] alpha entry probe complete")
 	}
 
 	// 초기 uinput 디바이스 생성
