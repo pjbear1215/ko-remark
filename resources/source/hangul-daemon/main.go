@@ -1153,6 +1153,14 @@ func (d *Daemon) currentPendingChar() (rune, bool) {
 	}
 }
 
+func (d *Daemon) isPreloadedChar(char rune) bool {
+	if d.preloadedKeyboard.fd == nil {
+		return false
+	}
+	_, ok := d.preloadedKeyboard.charToKey[char]
+	return ok
+}
+
 func (d *Daemon) showPending() {
 	char, ok := d.currentPendingChar()
 	if !ok {
@@ -1167,6 +1175,14 @@ func (d *Daemon) showPending() {
 func (d *Daemon) maybePreviewCurrent() {
 	char, ok := d.currentPendingChar()
 	if !ok {
+		return
+	}
+	if d.isPreloadedChar(char) {
+		if !d.pendingVisible || d.visibleChar != char {
+			d.commitPendingChar(char)
+		} else {
+			d.lastPreviewAt = time.Now()
+		}
 		return
 	}
 	previewInterval := d.currentPreviewInterval()
