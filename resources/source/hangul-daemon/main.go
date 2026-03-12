@@ -184,9 +184,14 @@ type keyPatchSpec struct {
 	mod     byte
 }
 
+type mappedKey struct {
+	code    uint16
+	shifted bool
+}
+
 type mappedKeyboard struct {
 	fd        *os.File
-	charToKey map[rune]uint16
+	charToKey map[rune]mappedKey
 }
 
 type KeymapPatcher struct {
@@ -194,7 +199,7 @@ type KeymapPatcher struct {
 	diskPath    string  // libepaper.so 디스크 경로
 	origUnicode uint16
 	origQtcode  uint32
-	keyEntries  map[uint16]keyPatchInfo
+	keyEntries  map[uint32]keyPatchInfo
 }
 
 func signatureForKeyEntry(code uint16, unicode uint16, qtcode uint32, mod byte) []byte {
@@ -204,6 +209,10 @@ func signatureForKeyEntry(code uint16, unicode uint16, qtcode uint32, mod byte) 
 	binary.LittleEndian.PutUint32(sig[4:8], qtcode)
 	sig[8] = mod
 	return sig[:]
+}
+
+func keyEntryID(code uint16, mod byte) uint32 {
+	return uint32(code)<<8 | uint32(mod)
 }
 
 var alphaKeyPatchSpecs = []keyPatchSpec{
@@ -374,9 +383,10 @@ func searchFileForSignature(path string, signature []byte) []int64 {
 
 func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
 	if kp.keyEntries == nil {
-		kp.keyEntries = make(map[uint16]keyPatchInfo)
+		kp.keyEntries = make(map[uint32]keyPatchInfo)
 	}
-	if _, ok := kp.keyEntries[spec.code]; ok {
+	id := keyEntryID(spec.code, spec.mod)
+	if _, ok := kp.keyEntries[id]; ok {
 		return nil
 	}
 	signature := signatureForKeyEntry(spec.code, spec.unicode, spec.qtcode, spec.mod)
@@ -384,7 +394,7 @@ func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
 	if len(offsets) == 0 {
 		return fmt.Errorf("key entry not found: code=%d unicode=U+%04X qt=0x%08x mod=%d", spec.code, spec.unicode, spec.qtcode, spec.mod)
 	}
-	kp.keyEntries[spec.code] = keyPatchInfo{
+	kp.keyEntries[id] = keyPatchInfo{
 		fileOffsets: offsets,
 		origUnicode: spec.unicode,
 		origQtcode:  spec.qtcode,
@@ -508,7 +518,7 @@ func (kp *KeymapPatcher) probeEntries(tag string, specs []keyPatchSpec) {
 			log.Printf("[%s] %s missing (%v)", tag, keyCodeName(spec.code), err)
 			continue
 		}
-		info := kp.keyEntries[spec.code]
+		info := kp.keyEntries[keyEntryID(spec.code, spec.mod)]
 		log.Printf("[%s] %s offsets=%d unicode=U+%04X qt=0x%08X mod=%d", tag, keyCodeName(spec.code), len(info.fileOffsets), info.origUnicode, info.origQtcode, spec.mod)
 		for i, off := range info.fileOffsets {
 			log.Printf("[%s]   %s[%d] fileOffset=0x%x", tag, keyCodeName(spec.code), i, off)
@@ -548,7 +558,7 @@ func (d *Daemon) setupPreloadedKeyboard(target string) error {
 		return fmt.Errorf("target sentence chars=%d exceeds available keys=%d", len(chars), len(specs))
 	}
 
-	charToKey := make(map[rune]uint16, len(chars))
+	charToKey := make(map[rune]mappedKey, len(chars))
 	usedCodes := make([]uint16, 0, len(chars))
 	for i, char := range chars {
 		code := specs[i].code
@@ -558,7 +568,7 @@ func (d *Daemon) setupPreloadedKeyboard(target string) error {
 			}
 			return fmt.Errorf("preload write %s for U+%04X: %w", keyCodeName(code), char, err)
 		}
-		charToKey[char] = code
+		charToKey[char] = mappedKey{code: code}
 		usedCodes = append(usedCodes, code)
 		log.Printf("[PRELOAD] %s => U+%04X (%c)", keyCodeName(code), char, char)
 	}
@@ -583,7 +593,7 @@ func (d *Daemon) setupPreloadedKeyboard(target string) error {
 }
 
 func (kp *KeymapPatcher) writeKeyToDisk(code uint16, unicode uint16, qtcode uint32) error {
-	info, ok := kp.keyEntries[code]
+	info, ok := kp.keyEntries[keyEntryID(code, 0)]
 	if !ok {
 		if code == KEY_Q {
 			return kp.writeToDisk(unicode, qtcode)
@@ -613,7 +623,7 @@ func (kp *KeymapPatcher) writeKeyToDisk(code uint16, unicode uint16, qtcode uint
 }
 
 func (kp *KeymapPatcher) restoreKey(code uint16) error {
-	info, ok := kp.keyEntries[code]
+	info, ok := kp.keyEntries[keyEntryID(code, 0)]
 	if !ok {
 		if code == KEY_Q {
 			kp.restoreDisk()
@@ -1050,9 +1060,13 @@ func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 	}
 
 	if d.preloadedKeyboard.fd != nil {
-		if code, ok := d.preloadedKeyboard.charToKey[char]; ok {
+		if key, ok := d.preloadedKeyboard.charToKey[char]; ok {
 			if batchReplace && backspaces == 1 {
-				d.sendKeySequenceOn(d.preloadedKeyboard.fd, KEY_BACKSPACE, code)
+				if key.shifted {
+					d.sendKeySequenceOn(d.preloadedKeyboard.fd, KEY_BACKSPACE, KEY_LEFTSHIFT, key.code)
+				} else {
+					d.sendKeySequenceOn(d.preloadedKeyboard.fd, KEY_BACKSPACE, key.code)
+				}
 			} else {
 				for i := 0; i < backspaces; i++ {
 					d.sendKeyTapOn(d.preloadedKeyboard.fd, KEY_BACKSPACE)
@@ -1060,7 +1074,13 @@ func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 				if backspaces > 0 {
 					time.Sleep(2 * time.Millisecond)
 				}
-				d.sendKeyTapOn(d.preloadedKeyboard.fd, code)
+				if key.shifted {
+					d.sendKeyOn(d.preloadedKeyboard.fd, KEY_LEFTSHIFT, true)
+					d.sendKeyTapOn(d.preloadedKeyboard.fd, key.code)
+					d.sendKeyOn(d.preloadedKeyboard.fd, KEY_LEFTSHIFT, false)
+				} else {
+					d.sendKeyTapOn(d.preloadedKeyboard.fd, key.code)
+				}
 			}
 			d.lastChar = char
 			return
