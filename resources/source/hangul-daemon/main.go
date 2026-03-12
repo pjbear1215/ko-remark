@@ -113,7 +113,7 @@ const (
 	debugLogging           = false
 	enableMultiDeviceProbe = false
 	enableAlphaEntryProbe  = false
-	enableShiftEntryProbe  = true
+	enableShiftEntryProbe  = false
 	enableDeviceCapacityProbe = false
 	deviceCapacityProbeMax    = 24
 	enablePerCharCache       = false
@@ -194,6 +194,12 @@ type mappedKeyboard struct {
 	charToKey map[rune]mappedKey
 }
 
+type fallbackCache struct {
+	fd        *os.File
+	charToKey map[rune]mappedKey
+	lru       []rune
+}
+
 type KeymapPatcher struct {
 	fileOffsets []int64 // KEY_Q 엔트리의 파일 오프셋 목록
 	diskPath    string  // libepaper.so 디스크 경로
@@ -271,6 +277,8 @@ var shiftKeyPatchSpecs = []keyPatchSpec{
 }
 
 const preloadedTargetSentence = "안녕하세요. 이상하네요. 감사합니다."
+
+const maxPreloadedKeyboards = 6
 
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
@@ -588,14 +596,48 @@ func preloadedVisibleRunes(target string) []rune {
 	return orderedUniqueRunes(string(states))
 }
 
-func (d *Daemon) setupPreloadedKeyboard(target string) error {
-	chars := preloadedVisibleRunes(target)
+func combinedPreloadedRunes(target string) []rune {
+	chars := make([]rune, 0, len(preloadedMappedChars)+len([]rune(target))*3)
+	chars = append(chars, preloadedMappedChars...)
+	chars = append(chars, preloadedVisibleRunes(target)...)
+	return orderedUniqueRunes(string(chars))
+}
+
+func (kp *KeymapPatcher) initSpecsEntries(specs []keyPatchSpec) error {
+	for _, spec := range specs {
+		if err := kp.initKeyEntry(spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func moveRuneToBack(items []rune, r rune) []rune {
+	out := make([]rune, 0, len(items))
+	for _, item := range items {
+		if item != r {
+			out = append(out, item)
+		}
+	}
+	return append(out, r)
+}
+
+func appendUniqueRune(items []rune, r rune) []rune {
+	for _, item := range items {
+		if item == r {
+			return items
+		}
+	}
+	return append(items, r)
+}
+
+func (d *Daemon) setupMappedKeyboard(name string, chars []rune) (mappedKeyboard, error) {
 	specs := allPlainKeyPatchSpecs()
 	if len(chars) == 0 {
-		return nil
+		return mappedKeyboard{}, nil
 	}
 	if len(chars) > len(specs) {
-		return fmt.Errorf("visible target chars=%d exceeds available keys=%d", len(chars), len(specs))
+		return mappedKeyboard{}, fmt.Errorf("chars=%d exceeds available keys=%d", len(chars), len(specs))
 	}
 
 	charToKey := make(map[rune]mappedKey, len(chars))
@@ -606,19 +648,19 @@ func (d *Daemon) setupPreloadedKeyboard(target string) error {
 			for _, used := range usedCodes {
 				_ = d.patcher.restoreKey(used)
 			}
-			return fmt.Errorf("preload write %s for U+%04X: %w", keyCodeName(code), char, err)
+			return mappedKeyboard{}, fmt.Errorf("mapped write %s for U+%04X: %w", keyCodeName(code), char, err)
 		}
 		charToKey[char] = mappedKey{code: code}
 		usedCodes = append(usedCodes, code)
 		log.Printf("[PRELOAD] %s => U+%04X (%c)", keyCodeName(code), char, char)
 	}
 
-	f, err := createUinputDevice("Hangul Preloaded Keyboard")
+	f, err := createUinputDevice(name)
 	if err != nil {
 		for _, used := range usedCodes {
 			_ = d.patcher.restoreKey(used)
 		}
-		return fmt.Errorf("create preloaded keyboard: %w", err)
+		return mappedKeyboard{}, fmt.Errorf("create mapped keyboard: %w", err)
 	}
 	time.Sleep(200 * time.Millisecond)
 	for _, used := range usedCodes {
@@ -627,9 +669,151 @@ func (d *Daemon) setupPreloadedKeyboard(target string) error {
 		}
 	}
 
-	d.preloadedKeyboard = mappedKeyboard{fd: f, charToKey: charToKey}
-	log.Printf("[PRELOAD] device ready for visible target chars=%d text=%q", len(chars), target)
+	return mappedKeyboard{fd: f, charToKey: charToKey}, nil
+}
+
+func (d *Daemon) setupPreloadedKeyboards(target string) error {
+	chars := combinedPreloadedRunes(target)
+	specs := allPlainKeyPatchSpecs()
+	if len(chars) == 0 {
+		return nil
+	}
+	capacity := len(specs)
+	maxChars := capacity * maxPreloadedKeyboards
+	if len(chars) > maxChars {
+		chars = chars[:maxChars]
+	}
+
+	for i := 0; i < maxPreloadedKeyboards; i++ {
+		start := i * capacity
+		if start >= len(chars) {
+			break
+		}
+		end := start + capacity
+		if end > len(chars) {
+			end = len(chars)
+		}
+		kb, err := d.setupMappedKeyboard(fmt.Sprintf("Hangul Preloaded Keyboard %d", i), chars[start:end])
+		if err != nil {
+			return fmt.Errorf("preloaded keyboard %d: %w", i, err)
+		}
+		d.preloadedKeyboards[i] = kb
+		log.Printf("[PRELOAD] device %d ready chars=%d", i, len(chars[start:end]))
+	}
+	log.Printf("[PRELOAD] devices ready for visible target chars=%d text=%q", len(chars), target)
 	return nil
+}
+
+func (d *Daemon) lookupPreloadedChar(char rune) (*os.File, mappedKey, bool) {
+	for i := range d.preloadedKeyboards {
+		kb := &d.preloadedKeyboards[i]
+		if kb.fd == nil {
+			continue
+		}
+		if key, ok := kb.charToKey[char]; ok {
+			return kb.fd, key, true
+		}
+	}
+	return nil, mappedKey{}, false
+}
+
+func (d *Daemon) isFallbackCached(char rune) bool {
+	if d.fallbackCache.fd == nil {
+		return false
+	}
+	_, ok := d.fallbackCache.charToKey[char]
+	return ok
+}
+
+func (d *Daemon) touchFallbackChar(char rune) {
+	if d.isFallbackCached(char) {
+		d.fallbackCache.lru = moveRuneToBack(d.fallbackCache.lru, char)
+	}
+}
+
+func (d *Daemon) queueFallbackChar(char rune) {
+	d.fallbackPending = appendUniqueRune(d.fallbackPending, char)
+}
+
+func (d *Daemon) rebuildFallbackCache(ensure []rune) error {
+	capacity := len(allPlainKeyPatchSpecs())
+	if capacity == 0 {
+		return nil
+	}
+	ensureSet := make(map[rune]struct{}, len(ensure))
+	desired := make([]rune, 0, capacity)
+	for _, char := range ensure {
+		if _, ok := ensureSet[char]; ok {
+			continue
+		}
+		ensureSet[char] = struct{}{}
+		desired = append(desired, char)
+	}
+	for i := len(d.fallbackCache.lru) - 1; i >= 0 && len(desired) < capacity; i-- {
+		char := d.fallbackCache.lru[i]
+		if _, ok := ensureSet[char]; ok {
+			continue
+		}
+		desired = append(desired, char)
+		ensureSet[char] = struct{}{}
+	}
+	if len(desired) > capacity {
+		desired = desired[:capacity]
+	}
+	for i, j := 0, len(desired)-1; i < j; i, j = i+1, j-1 {
+		desired[i], desired[j] = desired[j], desired[i]
+	}
+
+	kb, err := d.setupMappedKeyboard("Hangul Fallback Cache", desired)
+	if err != nil {
+		return err
+	}
+	if d.fallbackCache.fd != nil {
+		_ = ioctl(d.fallbackCache.fd.Fd(), UI_DEV_DESTROY, 0)
+		d.fallbackCache.fd.Close()
+	}
+	d.fallbackCache = fallbackCache{fd: kb.fd, charToKey: kb.charToKey, lru: desired}
+	return nil
+}
+
+func (d *Daemon) flushFallbackPending() {
+	if len(d.fallbackPending) == 0 {
+		return
+	}
+	pending := append([]rune(nil), d.fallbackPending...)
+	d.fallbackPending = d.fallbackPending[:0]
+	need := make([]rune, 0, len(pending))
+	for _, char := range pending {
+		if _, _, ok := d.lookupPreloadedChar(char); ok {
+			continue
+		}
+		if d.isFallbackCached(char) {
+			continue
+		}
+		need = appendUniqueRune(need, char)
+	}
+	if len(need) > 0 {
+		if err := d.rebuildFallbackCache(need); err != nil {
+			log.Printf("[FALLBACK] cache rebuild 실패: %v", err)
+			for _, char := range pending {
+				d.outputChar(char, 0, false)
+			}
+			return
+		}
+	}
+	for _, char := range pending {
+		if fd, key, ok := d.lookupPreloadedChar(char); ok {
+			d.sendKeyTapOn(fd, key.code)
+			continue
+		}
+		if key, ok := d.fallbackCache.charToKey[char]; ok {
+			d.sendKeyTapOn(d.fallbackCache.fd, key.code)
+			d.touchFallbackChar(char)
+			continue
+		}
+		// conservative fallback if cache rebuild did not retain the char
+		d.outputChar(char, 0, false)
+	}
 }
 
 func (kp *KeymapPatcher) writeKeyToDisk(code uint16, unicode uint16, qtcode uint32) error {
@@ -888,8 +1072,10 @@ type Daemon struct {
 	mu              sync.Mutex
 	inputFd         *os.File
 	uinputFd        *os.File
-	preloadedKeyboard mappedKeyboard
+	preloadedKeyboards [maxPreloadedKeyboards]mappedKeyboard
+	fallbackCache  fallbackCache
 	cachedKeyboards [2]cachedKeyboard
+	fallbackPending []rune
 	korean          bool
 	shifted        bool
 	ctrl_or_alt    bool
@@ -1099,29 +1285,46 @@ func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 		return
 	}
 
-	if d.preloadedKeyboard.fd != nil {
-		if key, ok := d.preloadedKeyboard.charToKey[char]; ok {
+	if fd, key, ok := d.lookupPreloadedChar(char); ok {
+		if batchReplace && backspaces == 1 {
+			if key.shifted {
+				d.sendKeySequenceOn(fd, KEY_BACKSPACE, KEY_LEFTSHIFT, key.code)
+			} else {
+				d.sendKeySequenceOn(fd, KEY_BACKSPACE, key.code)
+			}
+		} else {
+			for i := 0; i < backspaces; i++ {
+				d.sendKeyTapOn(fd, KEY_BACKSPACE)
+			}
+			if backspaces > 0 {
+				time.Sleep(2 * time.Millisecond)
+			}
+			if key.shifted {
+				d.sendKeyOn(fd, KEY_LEFTSHIFT, true)
+				d.sendKeyTapOn(fd, key.code)
+				d.sendKeyOn(fd, KEY_LEFTSHIFT, false)
+			} else {
+				d.sendKeyTapOn(fd, key.code)
+			}
+		}
+		d.lastChar = char
+		return
+	}
+
+	if d.fallbackCache.fd != nil {
+		if key, ok := d.fallbackCache.charToKey[char]; ok {
 			if batchReplace && backspaces == 1 {
-				if key.shifted {
-					d.sendKeySequenceOn(d.preloadedKeyboard.fd, KEY_BACKSPACE, KEY_LEFTSHIFT, key.code)
-				} else {
-					d.sendKeySequenceOn(d.preloadedKeyboard.fd, KEY_BACKSPACE, key.code)
-				}
+				d.sendKeySequenceOn(d.fallbackCache.fd, KEY_BACKSPACE, key.code)
 			} else {
 				for i := 0; i < backspaces; i++ {
-					d.sendKeyTapOn(d.preloadedKeyboard.fd, KEY_BACKSPACE)
+					d.sendKeyTapOn(d.fallbackCache.fd, KEY_BACKSPACE)
 				}
 				if backspaces > 0 {
 					time.Sleep(2 * time.Millisecond)
 				}
-				if key.shifted {
-					d.sendKeyOn(d.preloadedKeyboard.fd, KEY_LEFTSHIFT, true)
-					d.sendKeyTapOn(d.preloadedKeyboard.fd, key.code)
-					d.sendKeyOn(d.preloadedKeyboard.fd, KEY_LEFTSHIFT, false)
-				} else {
-					d.sendKeyTapOn(d.preloadedKeyboard.fd, key.code)
-				}
+				d.sendKeyTapOn(d.fallbackCache.fd, key.code)
 			}
+			d.touchFallbackChar(char)
 			d.lastChar = char
 			return
 		}
@@ -1235,11 +1438,15 @@ func (d *Daemon) currentPendingChar() (rune, bool) {
 }
 
 func (d *Daemon) isPreloadedChar(char rune) bool {
-	if d.preloadedKeyboard.fd == nil {
-		return false
-	}
-	_, ok := d.preloadedKeyboard.charToKey[char]
+	_, _, ok := d.lookupPreloadedChar(char)
 	return ok
+}
+
+func (d *Daemon) isFastChar(char rune) bool {
+	if d.isPreloadedChar(char) {
+		return true
+	}
+	return d.isFallbackCached(char)
 }
 
 func (d *Daemon) showPending() {
@@ -1250,7 +1457,12 @@ func (d *Daemon) showPending() {
 	if d.pendingVisible && d.visibleChar == char {
 		return
 	}
-	d.commitPendingChar(char)
+	if d.isFastChar(char) {
+		d.commitPendingChar(char)
+		return
+	}
+	d.queueFallbackChar(char)
+	d.flushFallbackPending()
 }
 
 func (d *Daemon) maybePreviewCurrent() {
@@ -1340,8 +1552,13 @@ func (d *Daemon) renderBackspaceStep(char rune) {
 
 func (d *Daemon) commitCurrent() {
 	if char, ok := d.currentPendingChar(); ok {
-		if !d.pendingVisible || d.visibleChar != char {
-			d.commitPendingChar(char)
+		if d.isFastChar(char) {
+			if !d.pendingVisible || d.visibleChar != char {
+				d.commitPendingChar(char)
+			}
+		} else {
+			d.queueFallbackChar(char)
+			d.flushFallbackPending()
 		}
 	}
 	d.resetCompose()
@@ -1880,8 +2097,8 @@ func (d *Daemon) run(devicePath string) error {
 	}
 
 	// 다음 단계용 기반: 여러 알파벳 키 엔트리를 찾아 둘 수 있는지 확인
-	if err := d.patcher.initAlphaEntries(); err != nil {
-		log.Printf("경고: 알파 엔트리 초기화 실패 (%v)", err)
+	if err := d.patcher.initSpecsEntries(allPlainKeyPatchSpecs()); err != nil {
+		log.Printf("경고: plain 엔트리 초기화 실패 (%v)", err)
 	} else {
 		if enableAlphaEntryProbe {
 			log.Println("[ALPHA] plain entry probe start")
@@ -1901,7 +2118,7 @@ func (d *Daemon) run(devicePath string) error {
 		return fmt.Errorf("setup uinput: %w", err)
 	}
 
-	if err := d.setupPreloadedKeyboard(preloadedTargetSentence); err != nil {
+	if err := d.setupPreloadedKeyboards(preloadedTargetSentence); err != nil {
 		log.Printf("경고: preloaded keyboard setup 실패 (%v)", err)
 	}
 
@@ -1968,10 +2185,17 @@ func (d *Daemon) cleanup() {
 		_ = ioctl(d.uinputFd.Fd(), UI_DEV_DESTROY, 0)
 		d.uinputFd.Close()
 	}
-	if d.preloadedKeyboard.fd != nil {
-		_ = ioctl(d.preloadedKeyboard.fd.Fd(), UI_DEV_DESTROY, 0)
-		d.preloadedKeyboard.fd.Close()
-		d.preloadedKeyboard = mappedKeyboard{}
+	for i := range d.preloadedKeyboards {
+		if d.preloadedKeyboards[i].fd != nil {
+			_ = ioctl(d.preloadedKeyboards[i].fd.Fd(), UI_DEV_DESTROY, 0)
+			d.preloadedKeyboards[i].fd.Close()
+			d.preloadedKeyboards[i] = mappedKeyboard{}
+		}
+	}
+	if d.fallbackCache.fd != nil {
+		_ = ioctl(d.fallbackCache.fd.Fd(), UI_DEV_DESTROY, 0)
+		d.fallbackCache.fd.Close()
+		d.fallbackCache = fallbackCache{}
 	}
 	for i := range d.cachedKeyboards {
 		if d.cachedKeyboards[i].fd != nil {
