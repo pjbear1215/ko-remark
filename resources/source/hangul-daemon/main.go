@@ -548,14 +548,54 @@ func orderedUniqueRunes(s string) []rune {
 	}
 	return result
 }
+
+func appendVisibleStatesForRune(dst []rune, r rune) []rune {
+	if r < 0xAC00 || r > 0xD7A3 {
+		if r != ' ' && r != '\n' && r != '\t' {
+			dst = append(dst, r)
+		}
+		return dst
+	}
+
+	syllable := int(r - 0xAC00)
+	cho := syllable / (21 * 28)
+	jung := (syllable / 28) % 21
+	jong := syllable % 28
+
+	dst = append(dst, choseongToJamo[cho])
+	if split := splitCompoundJungseong(jung); split.ok {
+		dst = append(dst, composeSyllable(cho, int(split.first), 0))
+	}
+
+	base := composeSyllable(cho, jung, 0)
+	dst = append(dst, base)
+
+	if jong != 0 {
+		if split := splitCompoundJongseong(jong); split.ok {
+			dst = append(dst, composeSyllable(cho, jung, int(split.first)))
+		}
+		dst = append(dst, composeSyllable(cho, jung, jong))
+	}
+
+	return dst
+}
+
+func preloadedVisibleRunes(target string) []rune {
+	states := make([]rune, 0, len([]rune(target))*3)
+	for _, r := range target {
+		states = appendVisibleStatesForRune(states, r)
+	}
+	return orderedUniqueRunes(string(states))
+}
+
 func (d *Daemon) setupPreloadedKeyboard(target string) error {
-	chars := orderedUniqueRunes(target)
+	chars := preloadedVisibleRunes(target)
 	specs := allPlainKeyPatchSpecs()
 	if len(chars) == 0 {
 		return nil
 	}
 	if len(chars) > len(specs) {
-		return fmt.Errorf("target sentence chars=%d exceeds available keys=%d", len(chars), len(specs))
+		return fmt.Errorf("visible target chars=%d exceeds available keys=%d", len(chars), len(specs))
 	}
 
 	charToKey := make(map[rune]mappedKey, len(chars))
@@ -588,7 +628,7 @@ func (d *Daemon) setupPreloadedKeyboard(target string) error {
 	}
 
 	d.preloadedKeyboard = mappedKeyboard{fd: f, charToKey: charToKey}
-	log.Printf("[PRELOAD] device ready for target sentence chars=%d text=%q", len(chars), target)
+	log.Printf("[PRELOAD] device ready for visible target chars=%d text=%q", len(chars), target)
 	return nil
 }
 
