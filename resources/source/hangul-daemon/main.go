@@ -89,6 +89,7 @@ const (
 	maxKeyCode             = KEY_CAPSLOCK
 	invalidIndex8          = int8(-1)
 	debugLogging           = false
+	enableMultiDeviceProbe = false
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
@@ -1261,6 +1262,49 @@ func waitForKeyboard() string {
 	}
 }
 
+func (d *Daemon) runMultiDeviceProbe() error {
+	if d.patcher == nil {
+		return fmt.Errorf("patcher not initialized")
+	}
+	log.Println("[PROBE] multi-device probe start")
+	defer d.patcher.restoreDisk()
+
+	if err := d.patcher.writeToDisk(uint16('가'), uint32('가')); err != nil {
+		return fmt.Errorf("probe patch A: %w", err)
+	}
+	devA, err := createUinputDevice("Probe A")
+	if err != nil {
+		return fmt.Errorf("probe create A: %w", err)
+	}
+	defer func() {
+		_ = ioctl(devA.Fd(), UI_DEV_DESTROY, 0)
+		devA.Close()
+	}()
+	time.Sleep(80 * time.Millisecond)
+
+	if err := d.patcher.writeToDisk(uint16('나'), uint32('나')); err != nil {
+		return fmt.Errorf("probe patch B: %w", err)
+	}
+	devB, err := createUinputDevice("Probe B")
+	if err != nil {
+		return fmt.Errorf("probe create B: %w", err)
+	}
+	defer func() {
+		_ = ioctl(devB.Fd(), UI_DEV_DESTROY, 0)
+		devB.Close()
+	}()
+	time.Sleep(80 * time.Millisecond)
+
+	log.Println("[PROBE] sending KEY_Q on Probe A (expected: 가)")
+	d.sendKeyTapOn(devA, KEY_Q)
+	time.Sleep(200 * time.Millisecond)
+	log.Println("[PROBE] sending KEY_Q on Probe B (expected: 나)")
+	d.sendKeyTapOn(devB, KEY_Q)
+	time.Sleep(200 * time.Millisecond)
+	log.Println("[PROBE] probe complete; verify whether output was '가나' or duplicated")
+	return nil
+}
+
 func (d *Daemon) run(devicePath string) error {
 	// 패처 초기화 (디스크에서 KEY_Q 오프셋 검색)
 	d.patcher = &KeymapPatcher{}
@@ -1273,6 +1317,12 @@ func (d *Daemon) run(devicePath string) error {
 		log.Printf("경고: xochitl 미실행 (%v)", err)
 	} else {
 		log.Printf("xochitl PID: %d", pid)
+	}
+
+	if enableMultiDeviceProbe {
+		if err := d.runMultiDeviceProbe(); err != nil {
+			return fmt.Errorf("multi-device probe: %w", err)
+		}
 	}
 
 	// 초기 uinput 디바이스 생성
