@@ -549,7 +549,7 @@ func (d *Daemon) setupPreloadedKeyboard(target string) error {
 		}
 		return fmt.Errorf("create preloaded keyboard: %w", err)
 	}
-	time.Sleep(80 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	for _, used := range usedCodes {
 		if err := d.patcher.restoreKey(used); err != nil {
 			log.Printf("[PRELOAD] restore %s failed: %v", keyCodeName(used), err)
@@ -1808,13 +1808,13 @@ func (d *Daemon) run(devicePath string) error {
 		log.Println("[ALPHA] alpha entry probe complete")
 	}
 
-	if err := d.setupPreloadedKeyboard(preloadedTargetSentence); err != nil {
-		log.Printf("경고: preloaded keyboard setup 실패 (%v)", err)
-	}
-
 	// 초기 uinput 디바이스 생성
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("setup uinput: %w", err)
+	}
+
+	if err := d.setupPreloadedKeyboard(preloadedTargetSentence); err != nil {
+		log.Printf("경고: preloaded keyboard setup 실패 (%v)", err)
 	}
 
 	d.korean = true
