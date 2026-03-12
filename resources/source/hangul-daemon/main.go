@@ -506,8 +506,7 @@ func orderedUniqueRunes(s string) []rune {
 	seen := make(map[rune]struct{})
 	result := make([]rune, 0, len([]rune(s)))
 	for _, r := range s {
-		if r == ' ' || r == '
-' || r == '	' {
+		if r == ' ' || r == '\n' || r == '\t' {
 			continue
 		}
 		if _, ok := seen[r]; ok {
@@ -518,7 +517,6 @@ func orderedUniqueRunes(s string) []rune {
 	}
 	return result
 }
-
 func (d *Daemon) setupPreloadedKeyboard(target string) error {
 	chars := orderedUniqueRunes(target)
 	specs := allPlainKeyPatchSpecs()
