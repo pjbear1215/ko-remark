@@ -464,10 +464,16 @@ type HangulState struct {
 	jong  int
 }
 
+type cachedKeyboard struct {
+	fd   *os.File
+	char rune
+}
+
 type Daemon struct {
 	mu             sync.Mutex
 	inputFd        *os.File
 	uinputFd       *os.File
+	cachedKeyboards [2]cachedKeyboard
 	korean         bool
 	shifted        bool
 	ctrl_or_alt    bool
@@ -490,39 +496,52 @@ func ioctl(fd uintptr, request uintptr, arg uintptr) error {
 	return nil
 }
 
-func (d *Daemon) setupUinput() error {
+func createUinputDevice(name string) (*os.File, error) {
 	f, err := os.OpenFile("/dev/uinput", os.O_WRONLY, 0)
 	if err != nil {
-		return fmt.Errorf("open /dev/uinput: %w", err)
+		return nil, fmt.Errorf("open /dev/uinput: %w", err)
 	}
-	d.uinputFd = f
 	fd := f.Fd()
 
 	if err := ioctl(fd, UI_SET_EVBIT, uintptr(EV_KEY)); err != nil {
-		return fmt.Errorf("UI_SET_EVBIT: %w", err)
+		f.Close()
+		return nil, fmt.Errorf("UI_SET_EVBIT: %w", err)
 	}
 	if err := ioctl(fd, UI_SET_EVBIT, uintptr(EV_SYN)); err != nil {
-		return fmt.Errorf("UI_SET_EVBIT SYN: %w", err)
+		f.Close()
+		return nil, fmt.Errorf("UI_SET_EVBIT SYN: %w", err)
 	}
 	for i := uintptr(0); i < 256; i++ {
 		if err := ioctl(fd, UI_SET_KEYBIT, i); err != nil {
-			return fmt.Errorf("UI_SET_KEYBIT %d: %w", i, err)
+			f.Close()
+			return nil, fmt.Errorf("UI_SET_KEYBIT %d: %w", i, err)
 		}
 	}
 
 	setup := UinputSetup{
 		ID: InputID{Bustype: BUS_USB, Vendor: 0x1234, Product: 0x5678, Version: 1},
 	}
-	copy(setup.Name[:], "Hangul Virtual Keyboard")
+	copy(setup.Name[:], name)
 
 	if err := ioctl(fd, UI_DEV_SETUP, uintptr(unsafe.Pointer(&setup))); err != nil {
-		return fmt.Errorf("UI_DEV_SETUP: %w", err)
+		f.Close()
+		return nil, fmt.Errorf("UI_DEV_SETUP: %w", err)
 	}
 	if err := ioctl(fd, UI_DEV_CREATE, 0); err != nil {
-		return fmt.Errorf("UI_DEV_CREATE: %w", err)
+		f.Close()
+		return nil, fmt.Errorf("UI_DEV_CREATE: %w", err)
 	}
 
-	log.Println("[UINPUT] 디바이스 생성 완료")
+	return f, nil
+}
+
+func (d *Daemon) setupUinput() error {
+	f, err := createUinputDevice("Hangul Virtual Keyboard")
+	if err != nil {
+		return err
+	}
+	d.uinputFd = f
+	log.Println("[UINPUT] 기본 디바이스 생성 완료")
 	return nil
 }
 
@@ -549,43 +568,104 @@ func (d *Daemon) recreateUinput() error {
 	return nil
 }
 
-func (d *Daemon) writeEvent(typ uint16, code uint16, value int32) error {
+func writeEventToFile(f *os.File, typ uint16, code uint16, value int32) error {
+	if f == nil {
+		return fmt.Errorf("nil uinput file")
+	}
 	var buf [inputEventSize]byte
 	binary.LittleEndian.PutUint64(buf[0:8], 0)
 	binary.LittleEndian.PutUint64(buf[8:16], 0)
 	binary.LittleEndian.PutUint16(buf[16:18], typ)
 	binary.LittleEndian.PutUint16(buf[18:20], code)
 	binary.LittleEndian.PutUint32(buf[20:24], uint32(value))
-	fd := int(d.uinputFd.Fd())
+	fd := int(f.Fd())
 	_, err := syscall.Write(fd, buf[:])
 	return err
 }
 
+func (d *Daemon) writeEvent(typ uint16, code uint16, value int32) error {
+	return writeEventToFile(d.uinputFd, typ, code, value)
+}
+
 func (d *Daemon) sendKey(code uint16, press bool) {
+	d.sendKeyOn(d.uinputFd, code, press)
+}
+
+func (d *Daemon) sendKeyOn(f *os.File, code uint16, press bool) {
 	val := int32(keyRelease)
 	if press {
 		val = keyPress
 	}
-	_ = d.writeEvent(EV_KEY, code, val)
-	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	_ = writeEventToFile(f, EV_KEY, code, val)
+	_ = writeEventToFile(f, EV_SYN, SYN_REPORT, 0)
 }
 
 func (d *Daemon) sendKeyTap(code uint16) {
-	d.sendKey(code, true)
-	d.sendKey(code, false)
+	d.sendKeyTapOn(d.uinputFd, code)
+}
+
+func (d *Daemon) sendKeyTapOn(f *os.File, code uint16) {
+	d.sendKeyOn(f, code, true)
+	d.sendKeyOn(f, code, false)
 }
 
 func (d *Daemon) sendKeySequence(codes ...uint16) {
+	d.sendKeySequenceOn(d.uinputFd, codes...)
+}
+
+func (d *Daemon) sendKeySequenceOn(f *os.File, codes ...uint16) {
 	for _, code := range codes {
-		_ = d.writeEvent(EV_KEY, code, keyPress)
-		_ = d.writeEvent(EV_KEY, code, keyRelease)
+		_ = writeEventToFile(f, EV_KEY, code, keyPress)
+		_ = writeEventToFile(f, EV_KEY, code, keyRelease)
 	}
-	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	_ = writeEventToFile(f, EV_SYN, SYN_REPORT, 0)
 }
 
 func (d *Daemon) sendBackspace() {
 	d.sendKeyTap(KEY_BACKSPACE)
 	time.Sleep(1 * time.Millisecond)
+}
+
+func (d *Daemon) cachedKeyboardFor(char rune) *os.File {
+	for i := range d.cachedKeyboards {
+		if d.cachedKeyboards[i].fd != nil && d.cachedKeyboards[i].char == char {
+			return d.cachedKeyboards[i].fd
+		}
+	}
+	return nil
+}
+
+func (d *Daemon) provisionCachedKeyboard(char rune) *os.File {
+	slot := -1
+	for i := range d.cachedKeyboards {
+		if d.cachedKeyboards[i].fd == nil {
+			slot = i
+			break
+		}
+	}
+	if slot == -1 {
+		return nil
+	}
+	if err := d.patcher.writeToDisk(uint16(char), uint32(char)); err != nil {
+		log.Printf("[CACHE] 디스크 쓰기 오류: %v", err)
+		return nil
+	}
+	f, err := createUinputDevice(fmt.Sprintf("Hangul Cached %d", slot))
+	if err != nil {
+		log.Printf("[CACHE] 디바이스 생성 오류: %v", err)
+		return nil
+	}
+	time.Sleep(80 * time.Millisecond)
+	d.cachedKeyboards[slot] = cachedKeyboard{fd: f, char: char}
+	log.Printf("[CACHE] 슬롯 %d에 U+%04X 캐시", slot, char)
+	return f
+}
+
+func (d *Daemon) cachedOrProvisionedKeyboard(char rune) *os.File {
+	if f := d.cachedKeyboardFor(char); f != nil {
+		return f
+	}
+	return d.provisionCachedKeyboard(char)
 }
 
 func (d *Daemon) passthrough(ev InputEvent) {
@@ -600,6 +680,22 @@ func (d *Daemon) passthrough(ev InputEvent) {
 func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 	if d.patcher == nil {
 		log.Printf("[OUTPUT] 패처 미초기화")
+		return
+	}
+
+	if target := d.cachedOrProvisionedKeyboard(char); target != nil {
+		if batchReplace && backspaces == 1 {
+			d.sendKeySequenceOn(target, KEY_BACKSPACE, KEY_Q)
+		} else {
+			for i := 0; i < backspaces; i++ {
+				d.sendKeyTapOn(target, KEY_BACKSPACE)
+			}
+			if backspaces > 0 {
+				time.Sleep(2 * time.Millisecond)
+			}
+			d.sendKeyTapOn(target, KEY_Q)
+		}
+		d.lastChar = char
 		return
 	}
 
@@ -1246,6 +1342,13 @@ func (d *Daemon) cleanup() {
 	if d.uinputFd != nil {
 		_ = ioctl(d.uinputFd.Fd(), UI_DEV_DESTROY, 0)
 		d.uinputFd.Close()
+	}
+	for i := range d.cachedKeyboards {
+		if d.cachedKeyboards[i].fd != nil {
+			_ = ioctl(d.cachedKeyboards[i].fd.Fd(), UI_DEV_DESTROY, 0)
+			d.cachedKeyboards[i].fd.Close()
+			d.cachedKeyboards[i] = cachedKeyboard{}
+		}
 	}
 	if d.patcher != nil {
 		d.patcher.restoreDisk()
