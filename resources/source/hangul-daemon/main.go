@@ -113,6 +113,7 @@ const (
 	debugLogging           = false
 	enableMultiDeviceProbe = false
 	enableAlphaEntryProbe  = false
+	enableShiftEntryProbe  = true
 	enableDeviceCapacityProbe = false
 	deviceCapacityProbeMax    = 24
 	enablePerCharCache       = false
@@ -238,6 +239,26 @@ var preloadedMappedChars = []rune{
 	0x3131, 0x3134, 0x3137, 0x3139, 0x3141, 0x3142, 0x3145, 0x3147, 0x3148,
 	0x314A, 0x314B, 0x314C, 0x314D, 0x314E, 0x314F, 0x3150, 0x3151, 0x3153,
 	0x3154, 0x3155, 0x3157, 0x315B, 0x315C, 0x3160, 0x3161, 0x3163,
+}
+
+var shiftKeyPatchSpecs = []keyPatchSpec{
+	{KEY_Q, 'Q', 'Q', 1}, {KEY_W, 'W', 'W', 1}, {KEY_E, 'E', 'E', 1},
+	{KEY_R, 'R', 'R', 1}, {KEY_T, 'T', 'T', 1}, {KEY_Y, 'Y', 'Y', 1},
+	{KEY_U, 'U', 'U', 1}, {KEY_I, 'I', 'I', 1}, {KEY_O, 'O', 'O', 1},
+	{KEY_P, 'P', 'P', 1}, {KEY_A, 'A', 'A', 1}, {KEY_S, 'S', 'S', 1},
+	{KEY_D, 'D', 'D', 1}, {KEY_F, 'F', 'F', 1}, {KEY_G, 'G', 'G', 1},
+	{KEY_H, 'H', 'H', 1}, {KEY_J, 'J', 'J', 1}, {KEY_K, 'K', 'K', 1},
+	{KEY_L, 'L', 'L', 1}, {KEY_Z, 'Z', 'Z', 1}, {KEY_X, 'X', 'X', 1},
+	{KEY_C, 'C', 'C', 1}, {KEY_V, 'V', 'V', 1}, {KEY_B, 'B', 'B', 1},
+	{KEY_N, 'N', 'N', 1}, {KEY_M, 'M', 'M', 1},
+	{KEY_1, '!', '!', 1}, {KEY_2, '@', '@', 1}, {KEY_3, '#', '#', 1},
+	{KEY_4, '$', '$', 1}, {KEY_5, '%', '%', 1}, {KEY_6, '^', '^', 1},
+	{KEY_7, '&', '&', 1}, {KEY_8, '*', '*', 1}, {KEY_9, '(', '(', 1},
+	{KEY_0, ')', ')', 1}, {KEY_MINUS, '_', '_', 1}, {KEY_EQUAL, '+', '+', 1},
+	{KEY_LEFTBRACE, '{', '{', 1}, {KEY_RIGHTBRACE, '}', '}', 1},
+	{KEY_SEMICOLON, ':', ':', 1}, {KEY_APOSTROPHE, '"', '"', 1},
+	{KEY_GRAVE, '~', '~', 1}, {KEY_BACKSLASH, '|', '|', 1},
+	{KEY_COMMA, '<', '<', 1}, {KEY_DOT, '>', '>', 1}, {KEY_SLASH, '?', '?', 1},
 }
 
 const preloadedTargetSentence = "안녕하세요. 이상하네요. 감사합니다."
@@ -481,16 +502,16 @@ func keyCodeName(code uint16) string {
 	}
 }
 
-func (kp *KeymapPatcher) probeEntries(specs []keyPatchSpec) {
+func (kp *KeymapPatcher) probeEntries(tag string, specs []keyPatchSpec) {
 	for _, spec := range specs {
 		if err := kp.initKeyEntry(spec); err != nil {
-			log.Printf("[ALPHA] %s missing (%v)", keyCodeName(spec.code), err)
+			log.Printf("[%s] %s missing (%v)", tag, keyCodeName(spec.code), err)
 			continue
 		}
 		info := kp.keyEntries[spec.code]
-		log.Printf("[ALPHA] %s offsets=%d unicode=U+%04X qt=0x%08X", keyCodeName(spec.code), len(info.fileOffsets), info.origUnicode, info.origQtcode)
+		log.Printf("[%s] %s offsets=%d unicode=U+%04X qt=0x%08X mod=%d", tag, keyCodeName(spec.code), len(info.fileOffsets), info.origUnicode, info.origQtcode, spec.mod)
 		for i, off := range info.fileOffsets {
-			log.Printf("[ALPHA]   %s[%d] fileOffset=0x%x", keyCodeName(spec.code), i, off)
+			log.Printf("[%s]   %s[%d] fileOffset=0x%x", tag, keyCodeName(spec.code), i, off)
 		}
 	}
 }
@@ -1801,11 +1822,18 @@ func (d *Daemon) run(devicePath string) error {
 	// 다음 단계용 기반: 여러 알파벳 키 엔트리를 찾아 둘 수 있는지 확인
 	if err := d.patcher.initAlphaEntries(); err != nil {
 		log.Printf("경고: 알파 엔트리 초기화 실패 (%v)", err)
-	} else if enableAlphaEntryProbe {
-		log.Println("[ALPHA] alpha entry probe start")
-		d.patcher.probeEntries(alphaKeyPatchSpecs)
-		d.patcher.probeEntries(extraKeyPatchSpecs)
-		log.Println("[ALPHA] alpha entry probe complete")
+	} else {
+		if enableAlphaEntryProbe {
+			log.Println("[ALPHA] plain entry probe start")
+			d.patcher.probeEntries("ALPHA", alphaKeyPatchSpecs)
+			d.patcher.probeEntries("ALPHA", extraKeyPatchSpecs)
+			log.Println("[ALPHA] plain entry probe complete")
+		}
+		if enableShiftEntryProbe {
+			log.Println("[SHIFT] shift entry probe start")
+			d.patcher.probeEntries("SHIFT", shiftKeyPatchSpecs)
+			log.Println("[SHIFT] shift entry probe complete")
+		}
 	}
 
 	// 초기 uinput 디바이스 생성
