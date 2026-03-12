@@ -37,6 +37,18 @@ const (
 	keyRepeat  = 2
 
 	// Keycodes
+	KEY_1          = 2
+	KEY_2          = 3
+	KEY_3          = 4
+	KEY_4          = 5
+	KEY_5          = 6
+	KEY_6          = 7
+	KEY_7          = 8
+	KEY_8          = 9
+	KEY_9          = 10
+	KEY_0          = 11
+	KEY_MINUS      = 12
+	KEY_EQUAL      = 13
 	KEY_BACKSPACE  = 14
 	KEY_Q          = 16
 	KEY_W          = 17
@@ -48,6 +60,8 @@ const (
 	KEY_I          = 23
 	KEY_O          = 24
 	KEY_P          = 25
+	KEY_LEFTBRACE  = 26
+	KEY_RIGHTBRACE = 27
 	KEY_ENTER      = 28
 	KEY_LEFTCTRL   = 29
 	KEY_A          = 30
@@ -59,7 +73,11 @@ const (
 	KEY_J          = 36
 	KEY_K          = 37
 	KEY_L          = 38
+	KEY_SEMICOLON  = 39
+	KEY_APOSTROPHE = 40
+	KEY_GRAVE      = 41
 	KEY_LEFTSHIFT  = 42
+	KEY_BACKSLASH  = 43
 	KEY_Z          = 44
 	KEY_X          = 45
 	KEY_C          = 46
@@ -67,6 +85,9 @@ const (
 	KEY_B          = 48
 	KEY_N          = 49
 	KEY_M          = 50
+	KEY_COMMA      = 51
+	KEY_DOT        = 52
+	KEY_SLASH      = 53
 	KEY_RIGHTSHIFT = 54
 	KEY_LEFTALT    = 56
 	KEY_SPACE      = 57
@@ -196,6 +217,17 @@ var alphaMappedKeyCodes = []uint16{
 	KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y, KEY_U, KEY_I, KEY_O, KEY_P,
 	KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_H, KEY_J, KEY_K, KEY_L,
 	KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B, KEY_N, KEY_M,
+}
+
+var extraKeyPatchSpecs = []keyPatchSpec{
+	{KEY_1, '1', '1', 0}, {KEY_2, '2', '2', 0}, {KEY_3, '3', '3', 0},
+	{KEY_4, '4', '4', 0}, {KEY_5, '5', '5', 0}, {KEY_6, '6', '6', 0},
+	{KEY_7, '7', '7', 0}, {KEY_8, '8', '8', 0}, {KEY_9, '9', '9', 0},
+	{KEY_0, '0', '0', 0}, {KEY_MINUS, '-', '-', 0}, {KEY_EQUAL, '=', '=', 0},
+	{KEY_LEFTBRACE, '[', '[', 0}, {KEY_RIGHTBRACE, ']', ']', 0},
+	{KEY_SEMICOLON, ';', ';', 0}, {KEY_APOSTROPHE, ''', ''', 0},
+	{KEY_GRAVE, '`', '`', 0}, {KEY_BACKSLASH, '\', '\', 0},
+	{KEY_COMMA, ',', ',', 0}, {KEY_DOT, '.', '.', 0}, {KEY_SLASH, '/', '/', 0},
 }
 
 var preloadedMappedChars = []rune{
@@ -344,6 +376,30 @@ func (kp *KeymapPatcher) initAlphaEntries() error {
 
 func keyCodeName(code uint16) string {
 	switch code {
+	case KEY_1:
+		return "KEY_1"
+	case KEY_2:
+		return "KEY_2"
+	case KEY_3:
+		return "KEY_3"
+	case KEY_4:
+		return "KEY_4"
+	case KEY_5:
+		return "KEY_5"
+	case KEY_6:
+		return "KEY_6"
+	case KEY_7:
+		return "KEY_7"
+	case KEY_8:
+		return "KEY_8"
+	case KEY_9:
+		return "KEY_9"
+	case KEY_0:
+		return "KEY_0"
+	case KEY_MINUS:
+		return "KEY_MINUS"
+	case KEY_EQUAL:
+		return "KEY_EQUAL"
 	case KEY_Q:
 		return "KEY_Q"
 	case KEY_W:
@@ -364,6 +420,10 @@ func keyCodeName(code uint16) string {
 		return "KEY_O"
 	case KEY_P:
 		return "KEY_P"
+	case KEY_LEFTBRACE:
+		return "KEY_LEFTBRACE"
+	case KEY_RIGHTBRACE:
+		return "KEY_RIGHTBRACE"
 	case KEY_A:
 		return "KEY_A"
 	case KEY_S:
@@ -382,6 +442,14 @@ func keyCodeName(code uint16) string {
 		return "KEY_K"
 	case KEY_L:
 		return "KEY_L"
+	case KEY_SEMICOLON:
+		return "KEY_SEMICOLON"
+	case KEY_APOSTROPHE:
+		return "KEY_APOSTROPHE"
+	case KEY_GRAVE:
+		return "KEY_GRAVE"
+	case KEY_BACKSLASH:
+		return "KEY_BACKSLASH"
 	case KEY_Z:
 		return "KEY_Z"
 	case KEY_X:
@@ -396,18 +464,24 @@ func keyCodeName(code uint16) string {
 		return "KEY_N"
 	case KEY_M:
 		return "KEY_M"
+	case KEY_COMMA:
+		return "KEY_COMMA"
+	case KEY_DOT:
+		return "KEY_DOT"
+	case KEY_SLASH:
+		return "KEY_SLASH"
 	default:
 		return fmt.Sprintf("KEY_%d", code)
 	}
 }
 
-func (kp *KeymapPatcher) logAlphaEntries() {
-	for _, spec := range alphaKeyPatchSpecs {
-		info, ok := kp.keyEntries[spec.code]
-		if !ok {
-			log.Printf("[ALPHA] %s missing", keyCodeName(spec.code))
+func (kp *KeymapPatcher) probeEntries(specs []keyPatchSpec) {
+	for _, spec := range specs {
+		if err := kp.initKeyEntry(spec); err != nil {
+			log.Printf("[ALPHA] %s missing (%v)", keyCodeName(spec.code), err)
 			continue
 		}
+		info := kp.keyEntries[spec.code]
 		log.Printf("[ALPHA] %s offsets=%d unicode=U+%04X qt=0x%08X", keyCodeName(spec.code), len(info.fileOffsets), info.origUnicode, info.origQtcode)
 		for i, off := range info.fileOffsets {
 			log.Printf("[ALPHA]   %s[%d] fileOffset=0x%x", keyCodeName(spec.code), i, off)
@@ -1527,7 +1601,8 @@ func (d *Daemon) run(devicePath string) error {
 		log.Printf("경고: 알파 엔트리 초기화 실패 (%v)", err)
 	} else if enableAlphaEntryProbe {
 		log.Println("[ALPHA] alpha entry probe start")
-		d.patcher.logAlphaEntries()
+		d.patcher.probeEntries(alphaKeyPatchSpecs)
+		d.patcher.probeEntries(extraKeyPatchSpecs)
 		log.Println("[ALPHA] alpha entry probe complete")
 	}
 
