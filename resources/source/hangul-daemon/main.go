@@ -803,7 +803,7 @@ func (d *Daemon) runReloadTimingProbe() error {
 		d.sendKeyTap(KEY_Q)
 		d.sendKeyTap(KEY_SPACE)
 		d.sendProbeText(fmt.Sprintf("%d/%d ", tc.destroyWait/time.Millisecond, tc.createWait/time.Millisecond))
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 	}
 	d.patcher.restoreDisk()
 	if err := d.recreateUinput(); err != nil {
