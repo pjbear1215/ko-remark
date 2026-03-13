@@ -826,6 +826,29 @@ func (d *Daemon) passthrough(ev InputEvent) {
 	_ = d.writeEvent(ev.Type, ev.Code, ev.Value)
 }
 
+func (d *Daemon) passthroughWithShift(ev InputEvent) {
+	if !d.shifted || ev.Type != EV_KEY || ev.Value == keyRepeat {
+		d.passthrough(ev)
+		return
+	}
+
+	if ev.Value == keyPress {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
+		_ = d.writeEvent(EV_KEY, ev.Code, keyPress)
+		_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+		return
+	}
+
+	if ev.Value == keyRelease {
+		_ = d.writeEvent(EV_KEY, ev.Code, keyRelease)
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+		_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+		return
+	}
+
+	d.passthrough(ev)
+}
+
 func (d *Daemon) initOutputLayout() error {
 	specs := allOutputSlotSpecs()
 	fixedChars := fixedOutputChars()
@@ -1394,7 +1417,7 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 		}
 		if ev.Code == KEY_SPACE || ev.Code == KEY_ENTER || ev.Code == KEY_TAB {
 			d.commitCurrent()
-			d.passthrough(ev)
+			d.passthroughWithShift(ev)
 			return
 		}
 		if ev.Code == KEY_BACKSPACE {
@@ -1402,11 +1425,11 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 				d.handleBackspace()
 				return
 			}
-			d.passthrough(ev)
+			d.passthroughWithShift(ev)
 			return
 		}
 		d.commitCurrent()
-		d.passthrough(ev)
+		d.passthroughWithShift(ev)
 		return
 	}
 
@@ -1414,7 +1437,7 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 		return
 	}
 
-	d.passthrough(ev)
+	d.passthroughWithShift(ev)
 }
 
 func findBTKeyboard() (string, error) {
