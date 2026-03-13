@@ -784,12 +784,12 @@ func (d *Daemon) recreateUinputWithWaits(destroyDelay, createDelay time.Duration
 
 func reloadProbeCases() []reloadProbeCase {
 	return []reloadProbeCase{
-		{label: "d10-c60", char: '가', destroyWait: 10 * time.Millisecond, createWait: 60 * time.Millisecond},
-		{label: "d5-c60", char: '나', destroyWait: 5 * time.Millisecond, createWait: 60 * time.Millisecond},
-		{label: "d10-c50", char: '다', destroyWait: 10 * time.Millisecond, createWait: 50 * time.Millisecond},
-		{label: "d5-c50", char: '라', destroyWait: 5 * time.Millisecond, createWait: 50 * time.Millisecond},
-		{label: "d10-c40", char: '마', destroyWait: 10 * time.Millisecond, createWait: 40 * time.Millisecond},
-		{label: "d5-c40", char: '바', destroyWait: 5 * time.Millisecond, createWait: 40 * time.Millisecond},
+		{label: "d0-c80", char: '가', destroyWait: 0, createWait: 80 * time.Millisecond},
+		{label: "d0-c70", char: '나', destroyWait: 0, createWait: 70 * time.Millisecond},
+		{label: "d0-c65", char: '다', destroyWait: 0, createWait: 65 * time.Millisecond},
+		{label: "d0-c60", char: '라', destroyWait: 0, createWait: 60 * time.Millisecond},
+		{label: "d5-c80", char: '마', destroyWait: 5 * time.Millisecond, createWait: 80 * time.Millisecond},
+		{label: "d5-c70", char: '바', destroyWait: 5 * time.Millisecond, createWait: 70 * time.Millisecond},
 	}
 }
 
