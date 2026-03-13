@@ -1473,10 +1473,7 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 				d.scheduleIdleFlush()
 			} else {
 				d.commitCurrent()
-				d.hangul.cho = choIdx
-				d.hangul.state = stateChoseong
-				d.pendingVisible = false
-				d.maybePreviewCurrent()
+				d.beginDeferredChoseong(choIdx)
 			}
 		} else if isChoseong {
 			d.commitCurrent()
