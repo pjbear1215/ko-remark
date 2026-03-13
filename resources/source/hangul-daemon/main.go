@@ -116,7 +116,7 @@ const (
 	maxIdleFlushDelay      = 260 * time.Millisecond
 	adaptiveMinKeyGap      = 40 * time.Millisecond
 	adaptiveMaxKeyGap      = 400 * time.Millisecond
-	preloadedDeviceCount   = 6
+	preloadedDeviceCount   = 1
 )
 
 // uinput 구조체
@@ -1046,34 +1046,17 @@ func appendVisibleRune(out *[]rune, r rune) {
 	}
 }
 
-func buildDevice0PreloadChars() []rune {
-	out := make([]rune, 0, 90)
+func buildStablePreloadChars() []rune {
+	out := make([]rune, 0, 80)
 	out = append(out, choseongToJamo...)
 	out = append(out, jungseongToJamo...)
-	out = append(out, []rune("가나다라마바사아자하거너더러머버서어저허고노도로모보소오조호구누두루무부수우주후기니디리미비시이지히")...)
+	out = append(out, []rune("안녕하세요.이상하네요감사합니다녀합정도면반갑습문제최적화잘되" )...)
 	return orderedUniqueRunes(out)
-}
-
-func buildClosedSyllablePreloadChars(jong int) []rune {
-	chos := []int{0, 2, 3, 5, 6, 7, 9, 11, 12, 18}
-	jungs := []int{0, 4, 8, 13, 20, 1, 6, 12, 17}
-	out := make([]rune, 0, len(chos)*len(jungs))
-	for _, cho := range chos {
-		for _, jung := range jungs {
-			out = append(out, composeSyllable(cho, jung, jong))
-		}
-	}
-	return out
 }
 
 func buildPreloadDeviceCharSets() ([][]rune, error) {
 	sets := [][]rune{
-		buildDevice0PreloadChars(),
-		buildClosedSyllablePreloadChars(4),  // ㄴ 받침
-		buildClosedSyllablePreloadChars(8),  // ㄹ 받침
-		buildClosedSyllablePreloadChars(16), // ㅁ 받침
-		buildClosedSyllablePreloadChars(21), // ㅇ 받침
-		buildClosedSyllablePreloadChars(17), // ㅂ 받침
+		buildStablePreloadChars(),
 	}
 	if len(sets) != preloadedDeviceCount {
 		return nil, fmt.Errorf("preload device count mismatch: got=%d want=%d", len(sets), preloadedDeviceCount)
