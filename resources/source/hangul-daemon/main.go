@@ -103,6 +103,7 @@ const (
 	destroyWait            = 30 * time.Millisecond
 	createWait             = 80 * time.Millisecond
 	enableReloadProbe      = true
+	reloadProbeRepeats     = 10
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
@@ -783,18 +784,12 @@ func (d *Daemon) recreateUinputWithWaits(destroyDelay, createDelay time.Duration
 
 func reloadProbeCases() []reloadProbeCase {
 	return []reloadProbeCase{
-		{label: "d30-c80", char: '가', destroyWait: 30 * time.Millisecond, createWait: 80 * time.Millisecond},
-		{label: "d10-c80", char: '나', destroyWait: 10 * time.Millisecond, createWait: 80 * time.Millisecond},
-		{label: "d5-c80", char: '다', destroyWait: 5 * time.Millisecond, createWait: 80 * time.Millisecond},
-		{label: "d30-c60", char: '라', destroyWait: 30 * time.Millisecond, createWait: 60 * time.Millisecond},
-		{label: "d10-c60", char: '마', destroyWait: 10 * time.Millisecond, createWait: 60 * time.Millisecond},
-		{label: "d5-c60", char: '바', destroyWait: 5 * time.Millisecond, createWait: 60 * time.Millisecond},
-		{label: "d30-c50", char: '사', destroyWait: 30 * time.Millisecond, createWait: 50 * time.Millisecond},
-		{label: "d10-c50", char: '아', destroyWait: 10 * time.Millisecond, createWait: 50 * time.Millisecond},
-		{label: "d5-c50", char: '자', destroyWait: 5 * time.Millisecond, createWait: 50 * time.Millisecond},
-		{label: "d30-c40", char: '차', destroyWait: 30 * time.Millisecond, createWait: 40 * time.Millisecond},
-		{label: "d10-c40", char: '카', destroyWait: 10 * time.Millisecond, createWait: 40 * time.Millisecond},
-		{label: "d5-c40", char: '타', destroyWait: 5 * time.Millisecond, createWait: 40 * time.Millisecond},
+		{label: "d10-c60", char: '가', destroyWait: 10 * time.Millisecond, createWait: 60 * time.Millisecond},
+		{label: "d5-c60", char: '나', destroyWait: 5 * time.Millisecond, createWait: 60 * time.Millisecond},
+		{label: "d10-c50", char: '다', destroyWait: 10 * time.Millisecond, createWait: 50 * time.Millisecond},
+		{label: "d5-c50", char: '라', destroyWait: 5 * time.Millisecond, createWait: 50 * time.Millisecond},
+		{label: "d10-c40", char: '마', destroyWait: 10 * time.Millisecond, createWait: 40 * time.Millisecond},
+		{label: "d5-c40", char: '바', destroyWait: 5 * time.Millisecond, createWait: 40 * time.Millisecond},
 	}
 }
 
@@ -802,15 +797,19 @@ func (d *Daemon) runReloadTimingProbe() error {
 	log.Printf("[RPROBE] reload timing probe start")
 	for _, tc := range reloadProbeCases() {
 		log.Printf("[RPROBE] case=%s destroy=%s create=%s expect=%c", tc.label, tc.destroyWait, tc.createWait, tc.char)
-		if err := d.patcher.writeToDisk(uint16(tc.char), uint32(tc.char)); err != nil {
-			return fmt.Errorf("reload probe write %s: %w", tc.label, err)
+		for i := 1; i <= reloadProbeRepeats; i++ {
+			log.Printf("[RPROBE] case=%s repeat=%d/%d", tc.label, i, reloadProbeRepeats)
+			if err := d.patcher.writeToDisk(uint16(tc.char), uint32(tc.char)); err != nil {
+				return fmt.Errorf("reload probe write %s repeat %d: %w", tc.label, i, err)
+			}
+			if err := d.recreateUinputWithWaits(tc.destroyWait, tc.createWait); err != nil {
+				return fmt.Errorf("reload probe recreate %s repeat %d: %w", tc.label, i, err)
+			}
+			d.sendKeyTap(KEY_Q)
+			d.sendKeyTap(KEY_SPACE)
+			d.sendProbeText(fmt.Sprintf("%d/%d %d ", tc.destroyWait/time.Millisecond, tc.createWait/time.Millisecond, i))
+			time.Sleep(1200 * time.Millisecond)
 		}
-		if err := d.recreateUinputWithWaits(tc.destroyWait, tc.createWait); err != nil {
-			return fmt.Errorf("reload probe recreate %s: %w", tc.label, err)
-		}
-		d.sendKeyTap(KEY_Q)
-		d.sendKeyTap(KEY_SPACE)
-		d.sendProbeText(fmt.Sprintf("%d/%d ", tc.destroyWait/time.Millisecond, tc.createWait/time.Millisecond))
 		time.Sleep(2 * time.Second)
 	}
 	d.patcher.restoreDisk()
