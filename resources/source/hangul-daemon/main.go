@@ -37,6 +37,16 @@ const (
 	keyRepeat  = 2
 
 	// Keycodes
+	KEY_1          = 2
+	KEY_2          = 3
+	KEY_3          = 4
+	KEY_4          = 5
+	KEY_5          = 6
+	KEY_6          = 7
+	KEY_7          = 8
+	KEY_8          = 9
+	KEY_9          = 10
+	KEY_0          = 11
 	KEY_BACKSPACE  = 14
 	KEY_Q          = 16
 	KEY_W          = 17
@@ -67,6 +77,7 @@ const (
 	KEY_B          = 48
 	KEY_N          = 49
 	KEY_M          = 50
+	KEY_SLASH      = 53
 	KEY_RIGHTSHIFT = 54
 	KEY_LEFTALT    = 56
 	KEY_SPACE      = 57
@@ -89,6 +100,9 @@ const (
 	maxKeyCode             = KEY_CAPSLOCK
 	invalidIndex8          = int8(-1)
 	debugLogging           = false
+	destroyWait            = 30 * time.Millisecond
+	createWait             = 80 * time.Millisecond
+	enableReloadProbe      = false
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
@@ -145,6 +159,13 @@ type outputSlot struct {
 	char     rune
 	fixed    bool
 	lastUsed uint64
+}
+
+type reloadProbeCase struct {
+	label       string
+	char        rune
+	destroyWait time.Duration
+	createWait  time.Duration
 }
 
 func makeKeyIndexTable(pairs ...keyIndexPair) [maxKeyCode + 1]int8 {
@@ -737,6 +758,10 @@ func (d *Daemon) setupUinput() error {
 // recreateUinput: uinput 디바이스를 파괴하고 재생성
 // xochitl이 새 핸들러를 생성하며, 이때 디스크의 (패치된) 키맵을 로드
 func (d *Daemon) recreateUinput() error {
+	return d.recreateUinputWithWaits(destroyWait, createWait)
+}
+
+func (d *Daemon) recreateUinputWithWaits(destroyDelay, createDelay time.Duration) error {
 	if d.uinputFd != nil {
 		_ = ioctl(d.uinputFd.Fd(), UI_DEV_DESTROY, 0)
 		d.uinputFd.Close()
@@ -744,16 +769,49 @@ func (d *Daemon) recreateUinput() error {
 	}
 
 	// xochitl 핸들러 정리 대기
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(destroyDelay)
 
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("recreate uinput: %w", err)
 	}
 
 	// xochitl이 새 디바이스를 감지하고 핸들러를 생성할 때까지 대기
-	// journal 로그 기준 ~44ms 소요
-	time.Sleep(80 * time.Millisecond)
+	time.Sleep(createDelay)
 
+	return nil
+}
+
+func reloadProbeCases() []reloadProbeCase {
+	return []reloadProbeCase{
+		{label: "baseline", char: '가', destroyWait: 30 * time.Millisecond, createWait: 80 * time.Millisecond},
+		{label: "mid", char: '나', destroyWait: 10 * time.Millisecond, createWait: 40 * time.Millisecond},
+		{label: "fast", char: '다', destroyWait: 5 * time.Millisecond, createWait: 20 * time.Millisecond},
+		{label: "aggr", char: '라', destroyWait: 2 * time.Millisecond, createWait: 10 * time.Millisecond},
+	}
+}
+
+func (d *Daemon) runReloadTimingProbe() error {
+	log.Printf("[RPROBE] reload timing probe start")
+	for _, tc := range reloadProbeCases() {
+		log.Printf("[RPROBE] case=%s destroy=%s create=%s expect=%c", tc.label, tc.destroyWait, tc.createWait, tc.char)
+		if err := d.patcher.writeToDisk(uint16(tc.char), uint32(tc.char)); err != nil {
+			return fmt.Errorf("reload probe write %s: %w", tc.label, err)
+		}
+		if err := d.recreateUinputWithWaits(tc.destroyWait, tc.createWait); err != nil {
+			return fmt.Errorf("reload probe recreate %s: %w", tc.label, err)
+		}
+		d.sendKeyTap(KEY_Q)
+		d.sendKeyTap(KEY_SPACE)
+		d.sendProbeText(fmt.Sprintf("%d/%d ", tc.destroyWait/time.Millisecond, tc.createWait/time.Millisecond))
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err := d.patcher.restoreDisk(); err != nil {
+		return fmt.Errorf("reload probe restore disk: %w", err)
+	}
+	if err := d.recreateUinput(); err != nil {
+		return fmt.Errorf("reload probe restore recreate: %w", err)
+	}
+	log.Printf("[RPROBE] reload timing probe complete")
 	return nil
 }
 
@@ -783,12 +841,46 @@ func (d *Daemon) sendKeyTap(code uint16) {
 	d.sendKey(code, false)
 }
 
-func (d *Daemon) sendKeySequence(codes ...uint16) {
-	for _, code := range codes {
-		_ = d.writeEvent(EV_KEY, code, keyPress)
-		_ = d.writeEvent(EV_KEY, code, keyRelease)
+func digitKeyCode(ch byte) (uint16, bool) {
+	switch ch {
+	case '1':
+		return KEY_1, true
+	case '2':
+		return KEY_2, true
+	case '3':
+		return KEY_3, true
+	case '4':
+		return KEY_4, true
+	case '5':
+		return KEY_5, true
+	case '6':
+		return KEY_6, true
+	case '7':
+		return KEY_7, true
+	case '8':
+		return KEY_8, true
+	case '9':
+		return KEY_9, true
+	case '0':
+		return KEY_0, true
+	default:
+		return 0, false
 	}
-	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+}
+
+func (d *Daemon) sendProbeText(text string) {
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case ' ':
+			d.sendKeyTap(KEY_SPACE)
+		case '/':
+			d.sendKeyTap(KEY_SLASH)
+		default:
+			if code, ok := digitKeyCode(text[i]); ok {
+				d.sendKeyTap(code)
+			}
+		}
+	}
 }
 
 func (d *Daemon) sendMappedKeyTap(key mappedKey) {
@@ -819,7 +911,6 @@ func (d *Daemon) sendMappedReplace(key mappedKey) {
 
 func (d *Daemon) sendBackspace() {
 	d.sendKeyTap(KEY_BACKSPACE)
-	time.Sleep(1 * time.Millisecond)
 }
 
 func (d *Daemon) passthrough(ev InputEvent) {
@@ -1013,9 +1104,6 @@ func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 
 	for i := 0; i < backspaces; i++ {
 		d.sendKeyTap(KEY_BACKSPACE)
-	}
-	if backspaces > 0 {
-		time.Sleep(2 * time.Millisecond)
 	}
 
 	d.sendMappedKeyTap(key)
@@ -1581,6 +1669,11 @@ func (d *Daemon) run(devicePath string) error {
 	// 초기 uinput 디바이스 생성
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("setup uinput: %w", err)
+	}
+	if enableReloadProbe {
+		if err := d.runReloadTimingProbe(); err != nil {
+			return fmt.Errorf("reload probe: %w", err)
+		}
 	}
 	if err := d.activateOutputLayout(); err != nil {
 		return fmt.Errorf("activate output layout: %w", err)
