@@ -805,9 +805,7 @@ func (d *Daemon) runReloadTimingProbe() error {
 		d.sendProbeText(fmt.Sprintf("%d/%d ", tc.destroyWait/time.Millisecond, tc.createWait/time.Millisecond))
 		time.Sleep(250 * time.Millisecond)
 	}
-	if err := d.patcher.restoreDisk(); err != nil {
-		return fmt.Errorf("reload probe restore disk: %w", err)
-	}
+	d.patcher.restoreDisk()
 	if err := d.recreateUinput(); err != nil {
 		return fmt.Errorf("reload probe restore recreate: %w", err)
 	}
