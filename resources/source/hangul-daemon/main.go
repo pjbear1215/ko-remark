@@ -783,10 +783,18 @@ func (d *Daemon) recreateUinputWithWaits(destroyDelay, createDelay time.Duration
 
 func reloadProbeCases() []reloadProbeCase {
 	return []reloadProbeCase{
-		{label: "baseline", char: '가', destroyWait: 30 * time.Millisecond, createWait: 80 * time.Millisecond},
-		{label: "mid", char: '나', destroyWait: 10 * time.Millisecond, createWait: 40 * time.Millisecond},
-		{label: "fast", char: '다', destroyWait: 5 * time.Millisecond, createWait: 20 * time.Millisecond},
-		{label: "aggr", char: '라', destroyWait: 2 * time.Millisecond, createWait: 10 * time.Millisecond},
+		{label: "d30-c80", char: '가', destroyWait: 30 * time.Millisecond, createWait: 80 * time.Millisecond},
+		{label: "d10-c80", char: '나', destroyWait: 10 * time.Millisecond, createWait: 80 * time.Millisecond},
+		{label: "d5-c80", char: '다', destroyWait: 5 * time.Millisecond, createWait: 80 * time.Millisecond},
+		{label: "d30-c60", char: '라', destroyWait: 30 * time.Millisecond, createWait: 60 * time.Millisecond},
+		{label: "d10-c60", char: '마', destroyWait: 10 * time.Millisecond, createWait: 60 * time.Millisecond},
+		{label: "d5-c60", char: '바', destroyWait: 5 * time.Millisecond, createWait: 60 * time.Millisecond},
+		{label: "d30-c50", char: '사', destroyWait: 30 * time.Millisecond, createWait: 50 * time.Millisecond},
+		{label: "d10-c50", char: '아', destroyWait: 10 * time.Millisecond, createWait: 50 * time.Millisecond},
+		{label: "d5-c50", char: '자', destroyWait: 5 * time.Millisecond, createWait: 50 * time.Millisecond},
+		{label: "d30-c40", char: '차', destroyWait: 30 * time.Millisecond, createWait: 40 * time.Millisecond},
+		{label: "d10-c40", char: '카', destroyWait: 10 * time.Millisecond, createWait: 40 * time.Millisecond},
+		{label: "d5-c40", char: '타', destroyWait: 5 * time.Millisecond, createWait: 40 * time.Millisecond},
 	}
 }
 
