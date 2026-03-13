@@ -1144,7 +1144,7 @@ func (d *Daemon) setupPreloadedKeyboards() error {
 			}
 			return fmt.Errorf("create preload device %d: %w", idx, err)
 		}
-		time.Sleep(120 * time.Millisecond)
+		time.Sleep(700 * time.Millisecond)
 		for _, used := range usedSpecs {
 			if err := d.patcher.restoreKeyEntry(used.code, used.mod); err != nil {
 				log.Printf("[PRELOAD %d] restore %s shift=%t failed: %v", idx, keyCodeName(used.code), used.mod != 0, err)
@@ -1155,6 +1155,7 @@ func (d *Daemon) setupPreloadedKeyboards() error {
 		log.Printf("[PRELOAD %d] device ready chars=%d", idx, len(chars))
 	}
 	d.preloadedKeyboards = keyboards
+	time.Sleep(700 * time.Millisecond)
 	log.Printf("[PRELOAD] total devices=%d total chars=%d", len(keyboards), totalChars)
 	return nil
 }
