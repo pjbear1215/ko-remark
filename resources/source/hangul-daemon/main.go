@@ -904,6 +904,23 @@ func sendMappedKeyTapOn(f *os.File, key mappedKey) {
 	_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
 }
 
+func sendMappedKeySequenceOn(f *os.File, keys ...mappedKey) {
+	for _, key := range keys {
+		if key.shifted {
+			_ = writeEventTo(f, EV_KEY, KEY_LEFTSHIFT, keyPress)
+			_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+		}
+		_ = writeEventTo(f, EV_KEY, key.code, keyPress)
+		_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+		_ = writeEventTo(f, EV_KEY, key.code, keyRelease)
+		_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+		if key.shifted {
+			_ = writeEventTo(f, EV_KEY, KEY_LEFTSHIFT, keyRelease)
+			_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+		}
+	}
+}
+
 func (d *Daemon) writeEvent(typ uint16, code uint16, value int32) error {
 	return writeEventTo(d.uinputFd, typ, code, value)
 }
@@ -946,6 +963,11 @@ func (d *Daemon) passthrough(ev InputEvent) {
 // 4. KEY_Q 전송 → xochitl이 패치된 문자로 표시
 func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 	if fd, mapped, ok := d.lookupPreloadedChar(char); ok {
+		if batchReplace && backspaces == 1 {
+			d.sendKeySequence(KEY_BACKSPACE)
+			sendMappedKeySequenceOn(fd, mapped)
+			return
+		}
 		for i := 0; i < backspaces; i++ {
 			d.sendKeyTap(KEY_BACKSPACE)
 		}
@@ -1308,6 +1330,16 @@ func (d *Daemon) commitCurrent() {
 	d.resetCompose()
 }
 
+func (d *Daemon) beginDeferredChoseong(choIdx int) {
+	d.hangul.cho = choIdx
+	d.hangul.jung = 0
+	d.hangul.jong = 0
+	d.hangul.state = stateChoseong
+	d.pendingVisible = false
+	d.visibleChar = 0
+	d.scheduleIdleFlush()
+}
+
 func isAlphaKey(code uint16) bool {
 	return (code >= KEY_Q && code <= KEY_P) ||
 		(code >= KEY_A && code <= KEY_L) ||
@@ -1408,10 +1440,7 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 			}
 		} else if isChoseong {
 			d.commitCurrent()
-			d.hangul.cho = choIdx
-			d.hangul.state = stateChoseong
-			d.pendingVisible = false
-			d.maybePreviewCurrent()
+			d.beginDeferredChoseong(choIdx)
 		}
 
 	case stateJongseong:
@@ -1450,10 +1479,7 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 			}
 		} else if isChoseong {
 			d.commitCurrent()
-			d.hangul.cho = choIdx
-			d.hangul.state = stateChoseong
-			d.pendingVisible = false
-			d.maybePreviewCurrent()
+			d.beginDeferredChoseong(choIdx)
 		}
 	}
 }
