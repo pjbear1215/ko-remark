@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -38,62 +37,62 @@ const (
 	keyRepeat  = 2
 
 	// Keycodes
-	KEY_1          = 2
-	KEY_2          = 3
-	KEY_3          = 4
-	KEY_4          = 5
-	KEY_5          = 6
-	KEY_6          = 7
-	KEY_7          = 8
-	KEY_8          = 9
-	KEY_9          = 10
-	KEY_0          = 11
-	KEY_MINUS      = 12
-	KEY_EQUAL      = 13
-	KEY_BACKSPACE  = 14
-	KEY_Q          = 16
-	KEY_W          = 17
-	KEY_E          = 18
-	KEY_R          = 19
-	KEY_T          = 20
-	KEY_Y          = 21
-	KEY_U          = 22
-	KEY_I          = 23
-	KEY_O          = 24
-	KEY_P          = 25
-	KEY_LEFTBRACE  = 26
-	KEY_RIGHTBRACE = 27
-	KEY_ENTER      = 28
-	KEY_LEFTCTRL   = 29
-	KEY_A          = 30
-	KEY_S          = 31
-	KEY_D          = 32
-	KEY_F          = 33
-	KEY_G          = 34
-	KEY_H          = 35
-	KEY_J          = 36
-	KEY_K          = 37
-	KEY_L          = 38
-	KEY_SEMICOLON  = 39
-	KEY_APOSTROPHE = 40
-	KEY_GRAVE      = 41
-	KEY_LEFTSHIFT  = 42
-	KEY_BACKSLASH  = 43
-	KEY_Z          = 44
-	KEY_X          = 45
-	KEY_C          = 46
-	KEY_V          = 47
-	KEY_B          = 48
-	KEY_N          = 49
-	KEY_M          = 50
-	KEY_COMMA      = 51
-	KEY_DOT        = 52
-	KEY_SLASH      = 53
-	KEY_RIGHTSHIFT = 54
-	KEY_LEFTALT    = 56
-	KEY_SPACE      = 57
-	KEY_CAPSLOCK   = 58
-	KEY_TAB        = 15
+	KEY_1           = 2
+	KEY_2           = 3
+	KEY_3           = 4
+	KEY_4           = 5
+	KEY_5           = 6
+	KEY_6           = 7
+	KEY_7           = 8
+	KEY_8           = 9
+	KEY_9           = 10
+	KEY_0           = 11
+	KEY_MINUS       = 12
+	KEY_EQUAL       = 13
+	KEY_BACKSPACE   = 14
+	KEY_TAB         = 15
+	KEY_Q           = 16
+	KEY_W           = 17
+	KEY_E           = 18
+	KEY_R           = 19
+	KEY_T           = 20
+	KEY_Y           = 21
+	KEY_U           = 22
+	KEY_I           = 23
+	KEY_O           = 24
+	KEY_P           = 25
+	KEY_LEFTBRACE   = 26
+	KEY_RIGHTBRACE  = 27
+	KEY_ENTER       = 28
+	KEY_LEFTCTRL    = 29
+	KEY_A           = 30
+	KEY_S           = 31
+	KEY_D           = 32
+	KEY_F           = 33
+	KEY_G           = 34
+	KEY_H           = 35
+	KEY_J           = 36
+	KEY_K           = 37
+	KEY_L           = 38
+	KEY_SEMICOLON   = 39
+	KEY_APOSTROPHE  = 40
+	KEY_GRAVE       = 41
+	KEY_LEFTSHIFT   = 42
+	KEY_BACKSLASH   = 43
+	KEY_Z           = 44
+	KEY_X           = 45
+	KEY_C           = 46
+	KEY_V           = 47
+	KEY_B           = 48
+	KEY_N           = 49
+	KEY_M           = 50
+	KEY_COMMA       = 51
+	KEY_DOT         = 52
+	KEY_SLASH       = 53
+	KEY_RIGHTSHIFT  = 54
+	KEY_LEFTALT     = 56
+	KEY_SPACE       = 57
+	KEY_CAPSLOCK    = 58
 
 	// uinput
 	UI_SET_EVBIT   = 0x40045564
@@ -111,18 +110,13 @@ const (
 	maxKeyCode             = KEY_CAPSLOCK
 	invalidIndex8          = int8(-1)
 	debugLogging           = false
-	enableMultiDeviceProbe = false
-	enableAlphaEntryProbe  = false
-	enableShiftEntryProbe  = false
-	enableDeviceCapacityProbe = false
-	deviceCapacityProbeMax    = 24
-	enablePerCharCache       = false
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
 	maxIdleFlushDelay      = 260 * time.Millisecond
 	adaptiveMinKeyGap      = 40 * time.Millisecond
 	adaptiveMaxKeyGap      = 400 * time.Millisecond
+	preloadedDeviceCount   = 6
 )
 
 // uinput 구조체
@@ -150,6 +144,29 @@ type jongSplit struct {
 	ok     bool
 }
 
+type mappedKey struct {
+	code    uint16
+	shifted bool
+}
+
+type mappedKeyboard struct {
+	fd        *os.File
+	charToKey map[rune]mappedKey
+}
+
+type keyPatchSpec struct {
+	code    uint16
+	unicode uint16
+	qtcode  uint32
+	mod     byte
+}
+
+type keyPatchInfo struct {
+	fileOffsets []int64
+	origUnicode uint16
+	origQtcode  uint32
+}
+
 func makeKeyIndexTable(pairs ...keyIndexPair) [maxKeyCode + 1]int8 {
 	var table [maxKeyCode + 1]int8
 	for i := range table {
@@ -171,35 +188,6 @@ func debugf(format string, args ...any) {
 // xochitl은 새 evdev 디바이스 감지 시 핸들러를 생성하며,
 // 이때 디스크의 키맵 데이터를 읽어 내부 조회 테이블을 구축함
 // → 디바이스를 재생성하면 패치된 키맵이 적용됨
-type keyPatchInfo struct {
-	fileOffsets []int64
-	origUnicode uint16
-	origQtcode  uint32
-}
-
-type keyPatchSpec struct {
-	code    uint16
-	unicode uint16
-	qtcode  uint32
-	mod     byte
-}
-
-type mappedKey struct {
-	code    uint16
-	shifted bool
-}
-
-type mappedKeyboard struct {
-	fd        *os.File
-	charToKey map[rune]mappedKey
-}
-
-type fallbackCache struct {
-	fd        *os.File
-	charToKey map[rune]mappedKey
-	lru       []rune
-}
-
 type KeymapPatcher struct {
 	fileOffsets []int64 // KEY_Q 엔트리의 파일 오프셋 목록
 	diskPath    string  // libepaper.so 디스크 경로
@@ -208,215 +196,8 @@ type KeymapPatcher struct {
 	keyEntries  map[uint32]keyPatchInfo
 }
 
-func signatureForKeyEntry(code uint16, unicode uint16, qtcode uint32, mod byte) []byte {
-	var sig [9]byte
-	binary.LittleEndian.PutUint16(sig[0:2], code)
-	binary.LittleEndian.PutUint16(sig[2:4], unicode)
-	binary.LittleEndian.PutUint32(sig[4:8], qtcode)
-	sig[8] = mod
-	return sig[:]
-}
-
-func keyEntryID(code uint16, mod byte) uint32 {
+func keyEntryKey(code uint16, mod byte) uint32 {
 	return uint32(code)<<8 | uint32(mod)
-}
-
-var alphaKeyPatchSpecs = []keyPatchSpec{
-	{KEY_Q, 'q', 'Q', 0}, {KEY_W, 'w', 'W', 0}, {KEY_E, 'e', 'E', 0},
-	{KEY_R, 'r', 'R', 0}, {KEY_T, 't', 'T', 0}, {KEY_Y, 'y', 'Y', 0},
-	{KEY_U, 'u', 'U', 0}, {KEY_I, 'i', 'I', 0}, {KEY_O, 'o', 'O', 0},
-	{KEY_P, 'p', 'P', 0}, {KEY_A, 'a', 'A', 0}, {KEY_S, 's', 'S', 0},
-	{KEY_D, 'd', 'D', 0}, {KEY_F, 'f', 'F', 0}, {KEY_G, 'g', 'G', 0},
-	{KEY_H, 'h', 'H', 0}, {KEY_J, 'j', 'J', 0}, {KEY_K, 'k', 'K', 0},
-	{KEY_L, 'l', 'L', 0}, {KEY_Z, 'z', 'Z', 0}, {KEY_X, 'x', 'X', 0},
-	{KEY_C, 'c', 'C', 0}, {KEY_V, 'v', 'V', 0}, {KEY_B, 'b', 'B', 0},
-	{KEY_N, 'n', 'N', 0}, {KEY_M, 'm', 'M', 0},
-}
-
-var alphaMappedKeyCodes = []uint16{
-	KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y, KEY_U, KEY_I, KEY_O, KEY_P,
-	KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_H, KEY_J, KEY_K, KEY_L,
-	KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B, KEY_N, KEY_M,
-}
-
-var extraKeyPatchSpecs = []keyPatchSpec{
-	{KEY_1, '1', '1', 0}, {KEY_2, '2', '2', 0}, {KEY_3, '3', '3', 0},
-	{KEY_4, '4', '4', 0}, {KEY_5, '5', '5', 0}, {KEY_6, '6', '6', 0},
-	{KEY_7, '7', '7', 0}, {KEY_8, '8', '8', 0}, {KEY_9, '9', '9', 0},
-	{KEY_0, '0', '0', 0}, {KEY_MINUS, '-', '-', 0}, {KEY_EQUAL, '=', '=', 0},
-	{KEY_LEFTBRACE, '[', '[', 0}, {KEY_RIGHTBRACE, ']', ']', 0},
-	{KEY_SEMICOLON, ';', ';', 0}, {KEY_APOSTROPHE, '\'', '\'', 0},
-	{KEY_GRAVE, '`', '`', 0}, {KEY_BACKSLASH, '\\', '\\', 0},
-	{KEY_COMMA, ',', ',', 0}, {KEY_DOT, '.', '.', 0}, {KEY_SLASH, '/', '/', 0},
-}
-
-var preloadedMappedChars = []rune{
-	0x3131, 0x3134, 0x3137, 0x3139, 0x3141, 0x3142, 0x3145, 0x3147, 0x3148,
-	0x314A, 0x314B, 0x314C, 0x314D, 0x314E, 0x314F, 0x3150, 0x3151, 0x3153,
-	0x3154, 0x3155, 0x3157, 0x315B, 0x315C, 0x3160, 0x3161, 0x3163,
-}
-
-var shiftKeyPatchSpecs = []keyPatchSpec{
-	{KEY_Q, 'Q', 'Q', 1}, {KEY_W, 'W', 'W', 1}, {KEY_E, 'E', 'E', 1},
-	{KEY_R, 'R', 'R', 1}, {KEY_T, 'T', 'T', 1}, {KEY_Y, 'Y', 'Y', 1},
-	{KEY_U, 'U', 'U', 1}, {KEY_I, 'I', 'I', 1}, {KEY_O, 'O', 'O', 1},
-	{KEY_P, 'P', 'P', 1}, {KEY_A, 'A', 'A', 1}, {KEY_S, 'S', 'S', 1},
-	{KEY_D, 'D', 'D', 1}, {KEY_F, 'F', 'F', 1}, {KEY_G, 'G', 'G', 1},
-	{KEY_H, 'H', 'H', 1}, {KEY_J, 'J', 'J', 1}, {KEY_K, 'K', 'K', 1},
-	{KEY_L, 'L', 'L', 1}, {KEY_Z, 'Z', 'Z', 1}, {KEY_X, 'X', 'X', 1},
-	{KEY_C, 'C', 'C', 1}, {KEY_V, 'V', 'V', 1}, {KEY_B, 'B', 'B', 1},
-	{KEY_N, 'N', 'N', 1}, {KEY_M, 'M', 'M', 1},
-	{KEY_1, '!', '!', 1}, {KEY_2, '@', '@', 1}, {KEY_3, '#', '#', 1},
-	{KEY_4, '$', '$', 1}, {KEY_5, '%', '%', 1}, {KEY_6, '^', '^', 1},
-	{KEY_7, '&', '&', 1}, {KEY_8, '*', '*', 1}, {KEY_9, '(', '(', 1},
-	{KEY_0, ')', ')', 1}, {KEY_MINUS, '_', '_', 1}, {KEY_EQUAL, '+', '+', 1},
-	{KEY_LEFTBRACE, '{', '{', 1}, {KEY_RIGHTBRACE, '}', '}', 1},
-	{KEY_SEMICOLON, ':', ':', 1}, {KEY_APOSTROPHE, '"', '"', 1},
-	{KEY_GRAVE, '~', '~', 1}, {KEY_BACKSLASH, '|', '|', 1},
-	{KEY_COMMA, '<', '<', 1}, {KEY_DOT, '>', '>', 1}, {KEY_SLASH, '?', '?', 1},
-}
-
-const preloadedTargetSentence = "안녕하세요. 이상하네요. 감사합니다."
-
-const maxPreloadedKeyboards = 6
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
-}
-
-func (kp *KeymapPatcher) init() error {
-	kp.diskPath = "/usr/lib/plugins/platforms/libepaper.so"
-	backupPath := "/tmp/libepaper.so.original"
-
-	// KEY_Q plain 엔트리 시그니처: keycode=0x10, unicode='q', qtcode=Qt::Key_Q, mod=0
-	signature := []byte{0x10, 0x00, 0x71, 0x00, 0x51, 0x00, 0x00, 0x00, 0x00}
-
-	kp.fileOffsets = searchFileForSignature(kp.diskPath, signature)
-
-	if len(kp.fileOffsets) == 0 {
-		// 이전 세션에서 패치된 상태일 수 있음 → 백업에서 복원
-		if _, err := os.Stat(backupPath); err == nil {
-			log.Println("[PATCHER] 이전 패치 감지, 백업에서 복원 중...")
-			if err := copyFile(backupPath, kp.diskPath); err != nil {
-				return fmt.Errorf("backup restore failed: %w", err)
-			}
-			kp.fileOffsets = searchFileForSignature(kp.diskPath, signature)
-		}
-	}
-
-	if len(kp.fileOffsets) == 0 {
-		return fmt.Errorf("KEY_Q entry not found in %s", kp.diskPath)
-	}
-
-	// 백업 생성 (없으면)
-	if _, err := os.Stat(backupPath); err != nil {
-		if err := copyFile(kp.diskPath, backupPath); err != nil {
-			log.Printf("[PATCHER] 백업 생성 실패: %v", err)
-		} else {
-			log.Printf("[PATCHER] 백업 생성: %s", backupPath)
-		}
-	}
-
-	// 원본 값 (항상 동일)
-	kp.origUnicode = 0x0071     // 'q'
-	kp.origQtcode = 0x00000051 // Qt::Key_Q
-
-	log.Printf("[PATCHER] %s 에서 %d개의 KEY_Q 엔트리 발견", kp.diskPath, len(kp.fileOffsets))
-	for i, fOff := range kp.fileOffsets {
-		log.Printf("  [%d] fileOffset=0x%x", i, fOff)
-	}
-
-	// 쓰기 가능 여부 테스트
-	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("cannot write to %s (mount -o remount,rw / 필요?): %w", kp.diskPath, err)
-	}
-	f.Close()
-
-	return nil
-}
-
-func searchFileForSignature(path string, signature []byte) []int64 {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
-	fi, err := f.Stat()
-	if err != nil {
-		return nil
-	}
-	fileSize := fi.Size()
-
-	var offsets []int64
-	buf := make([]byte, 4096)
-	sigLen := int64(len(signature))
-
-	for off := int64(0); off < fileSize; off += int64(len(buf)) - sigLen {
-		readSize := int64(len(buf))
-		if off+readSize > fileSize {
-			readSize = fileSize - off
-		}
-		n, err := f.ReadAt(buf[:readSize], off)
-		if err != nil || int64(n) < sigLen {
-			continue
-		}
-		for i := 0; i <= n-len(signature); i++ {
-			match := true
-			for j := 0; j < len(signature); j++ {
-				if buf[i+j] != signature[j] {
-					match = false
-					break
-				}
-			}
-			if match {
-				offsets = append(offsets, off+int64(i))
-			}
-		}
-	}
-	return offsets
-}
-
-func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
-	if kp.keyEntries == nil {
-		kp.keyEntries = make(map[uint32]keyPatchInfo)
-	}
-	id := keyEntryID(spec.code, spec.mod)
-	if _, ok := kp.keyEntries[id]; ok {
-		return nil
-	}
-	signature := signatureForKeyEntry(spec.code, spec.unicode, spec.qtcode, spec.mod)
-	offsets := searchFileForSignature(kp.diskPath, signature)
-	if len(offsets) == 0 {
-		return fmt.Errorf("key entry not found: code=%d unicode=U+%04X qt=0x%08x mod=%d", spec.code, spec.unicode, spec.qtcode, spec.mod)
-	}
-	kp.keyEntries[id] = keyPatchInfo{
-		fileOffsets: offsets,
-		origUnicode: spec.unicode,
-		origQtcode:  spec.qtcode,
-	}
-	return nil
-}
-
-func (kp *KeymapPatcher) initAlphaEntries() error {
-	for _, spec := range alphaKeyPatchSpecs {
-		if err := kp.initKeyEntry(spec); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func keyCodeName(code uint16) string {
@@ -520,91 +301,195 @@ func keyCodeName(code uint16) string {
 	}
 }
 
-func (kp *KeymapPatcher) probeEntries(tag string, specs []keyPatchSpec) {
-	for _, spec := range specs {
-		if err := kp.initKeyEntry(spec); err != nil {
-			log.Printf("[%s] %s missing (%v)", tag, keyCodeName(spec.code), err)
-			continue
-		}
-		info := kp.keyEntries[keyEntryID(spec.code, spec.mod)]
-		log.Printf("[%s] %s offsets=%d unicode=U+%04X qt=0x%08X mod=%d", tag, keyCodeName(spec.code), len(info.fileOffsets), info.origUnicode, info.origQtcode, spec.mod)
-		for i, off := range info.fileOffsets {
-			log.Printf("[%s]   %s[%d] fileOffset=0x%x", tag, keyCodeName(spec.code), i, off)
-		}
+func allPlainKeyPatchSpecs() []keyPatchSpec {
+	return []keyPatchSpec{
+		{KEY_Q, 'q', 'Q', 0}, {KEY_W, 'w', 'W', 0}, {KEY_E, 'e', 'E', 0},
+		{KEY_R, 'r', 'R', 0}, {KEY_T, 't', 'T', 0}, {KEY_Y, 'y', 'Y', 0},
+		{KEY_U, 'u', 'U', 0}, {KEY_I, 'i', 'I', 0}, {KEY_O, 'o', 'O', 0},
+		{KEY_P, 'p', 'P', 0}, {KEY_A, 'a', 'A', 0}, {KEY_S, 's', 'S', 0},
+		{KEY_D, 'd', 'D', 0}, {KEY_F, 'f', 'F', 0}, {KEY_G, 'g', 'G', 0},
+		{KEY_H, 'h', 'H', 0}, {KEY_J, 'j', 'J', 0}, {KEY_K, 'k', 'K', 0},
+		{KEY_L, 'l', 'L', 0}, {KEY_Z, 'z', 'Z', 0}, {KEY_X, 'x', 'X', 0},
+		{KEY_C, 'c', 'C', 0}, {KEY_V, 'v', 'V', 0}, {KEY_B, 'b', 'B', 0},
+		{KEY_N, 'n', 'N', 0}, {KEY_M, 'm', 'M', 0},
+		{KEY_1, '1', '1', 0}, {KEY_2, '2', '2', 0}, {KEY_3, '3', '3', 0},
+		{KEY_4, '4', '4', 0}, {KEY_5, '5', '5', 0}, {KEY_6, '6', '6', 0},
+		{KEY_7, '7', '7', 0}, {KEY_8, '8', '8', 0}, {KEY_9, '9', '9', 0},
+		{KEY_0, '0', '0', 0}, {KEY_MINUS, '-', '-', 0}, {KEY_EQUAL, '=', '=', 0},
+		{KEY_LEFTBRACE, '[', '[', 0}, {KEY_RIGHTBRACE, ']', ']', 0},
+		{KEY_SEMICOLON, ';', ';', 0}, {KEY_APOSTROPHE, '\'', '\'', 0},
+		{KEY_BACKSLASH, '\\', '\\', 0}, {KEY_COMMA, ',', ',', 0},
+		{KEY_DOT, '.', '.', 0}, {KEY_SLASH, '/', '/', 0},
 	}
 }
 
-func allPlainKeyPatchSpecs() []keyPatchSpec {
-	specs := make([]keyPatchSpec, 0, len(alphaKeyPatchSpecs)+len(extraKeyPatchSpecs))
-	specs = append(specs, alphaKeyPatchSpecs...)
-	specs = append(specs, extraKeyPatchSpecs...)
+func allShiftKeyPatchSpecs() []keyPatchSpec {
+	return []keyPatchSpec{
+		{KEY_Q, 'Q', 'Q', 1}, {KEY_W, 'W', 'W', 1}, {KEY_E, 'E', 'E', 1},
+		{KEY_R, 'R', 'R', 1}, {KEY_T, 'T', 'T', 1}, {KEY_Y, 'Y', 'Y', 1},
+		{KEY_U, 'U', 'U', 1}, {KEY_I, 'I', 'I', 1}, {KEY_O, 'O', 'O', 1},
+		{KEY_P, 'P', 'P', 1}, {KEY_A, 'A', 'A', 1}, {KEY_S, 'S', 'S', 1},
+		{KEY_D, 'D', 'D', 1}, {KEY_F, 'F', 'F', 1}, {KEY_G, 'G', 'G', 1},
+		{KEY_H, 'H', 'H', 1}, {KEY_J, 'J', 'J', 1}, {KEY_K, 'K', 'K', 1},
+		{KEY_L, 'L', 'L', 1}, {KEY_Z, 'Z', 'Z', 1}, {KEY_X, 'X', 'X', 1},
+		{KEY_C, 'C', 'C', 1}, {KEY_V, 'V', 'V', 1}, {KEY_B, 'B', 'B', 1},
+		{KEY_N, 'N', 'N', 1}, {KEY_M, 'M', 'M', 1},
+		{KEY_1, '!', '!', 1}, {KEY_2, '@', '@', 1}, {KEY_3, '#', '#', 1},
+		{KEY_4, '$', '$', 1}, {KEY_5, '%', '%', 1}, {KEY_7, '&', '&', 1},
+		{KEY_8, '*', '*', 1}, {KEY_9, '(', '(', 1}, {KEY_0, ')', ')', 1},
+		{KEY_MINUS, '_', '_', 1}, {KEY_EQUAL, '+', '+', 1},
+		{KEY_LEFTBRACE, '{', '{', 1}, {KEY_RIGHTBRACE, '}', '}', 1},
+		{KEY_SEMICOLON, ':', ':', 1}, {KEY_APOSTROPHE, '"', '"', 1},
+		{KEY_BACKSLASH, '|', '|', 1}, {KEY_COMMA, '<', '<', 1},
+		{KEY_DOT, '>', '>', 1}, {KEY_SLASH, '?', '?', 1},
+	}
+}
+
+func allPreloadKeyPatchSpecs() []keyPatchSpec {
+	specs := append([]keyPatchSpec{}, allPlainKeyPatchSpecs()...)
+	specs = append(specs, allShiftKeyPatchSpecs()...)
 	return specs
 }
 
-func orderedUniqueRunes(s string) []rune {
-	seen := make(map[rune]struct{})
-	result := make([]rune, 0, len([]rune(s)))
-	for _, r := range s {
-		if r == ' ' || r == '\n' || r == '\t' {
+func mappedKeyFromSpec(spec keyPatchSpec) mappedKey {
+	return mappedKey{code: spec.code, shifted: spec.mod != 0}
+}
+
+func signatureForKeyEntry(spec keyPatchSpec) []byte {
+	sig := make([]byte, 9)
+	binary.LittleEndian.PutUint16(sig[0:2], spec.code)
+	binary.LittleEndian.PutUint16(sig[2:4], spec.unicode)
+	binary.LittleEndian.PutUint32(sig[4:8], spec.qtcode)
+	sig[8] = spec.mod
+	return sig
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func (kp *KeymapPatcher) init() error {
+	kp.diskPath = "/usr/lib/plugins/platforms/libepaper.so"
+	kp.keyEntries = make(map[uint32]keyPatchInfo)
+	backupPath := "/tmp/libepaper.so.original"
+
+	// KEY_Q plain 엔트리 시그니처: keycode=0x10, unicode='q', qtcode=Qt::Key_Q, mod=0
+	signature := []byte{0x10, 0x00, 0x71, 0x00, 0x51, 0x00, 0x00, 0x00, 0x00}
+
+	kp.fileOffsets = searchFileForSignature(kp.diskPath, signature)
+
+	if len(kp.fileOffsets) == 0 {
+		// 이전 세션에서 패치된 상태일 수 있음 → 백업에서 복원
+		if _, err := os.Stat(backupPath); err == nil {
+			log.Println("[PATCHER] 이전 패치 감지, 백업에서 복원 중...")
+			if err := copyFile(backupPath, kp.diskPath); err != nil {
+				return fmt.Errorf("backup restore failed: %w", err)
+			}
+			kp.fileOffsets = searchFileForSignature(kp.diskPath, signature)
+		}
+	}
+
+	if len(kp.fileOffsets) == 0 {
+		return fmt.Errorf("KEY_Q entry not found in %s", kp.diskPath)
+	}
+
+	// 백업 생성 (없으면)
+	if _, err := os.Stat(backupPath); err != nil {
+		if err := copyFile(kp.diskPath, backupPath); err != nil {
+			log.Printf("[PATCHER] 백업 생성 실패: %v", err)
+		} else {
+			log.Printf("[PATCHER] 백업 생성: %s", backupPath)
+		}
+	}
+
+	// 원본 값 (항상 동일)
+	kp.origUnicode = 0x0071     // 'q'
+	kp.origQtcode = 0x00000051 // Qt::Key_Q
+
+	log.Printf("[PATCHER] %s 에서 %d개의 KEY_Q 엔트리 발견", kp.diskPath, len(kp.fileOffsets))
+	for i, fOff := range kp.fileOffsets {
+		log.Printf("  [%d] fileOffset=0x%x", i, fOff)
+	}
+
+	// 쓰기 가능 여부 테스트
+	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("cannot write to %s (mount -o remount,rw / 필요?): %w", kp.diskPath, err)
+	}
+	f.Close()
+
+	return nil
+}
+
+func searchFileForSignature(path string, signature []byte) []int64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	fileSize := fi.Size()
+
+	var offsets []int64
+	buf := make([]byte, 4096)
+	sigLen := int64(len(signature))
+
+	for off := int64(0); off < fileSize; off += int64(len(buf)) - sigLen {
+		readSize := int64(len(buf))
+		if off+readSize > fileSize {
+			readSize = fileSize - off
+		}
+		n, err := f.ReadAt(buf[:readSize], off)
+		if err != nil || int64(n) < sigLen {
 			continue
 		}
-		if _, ok := seen[r]; ok {
-			continue
+		for i := 0; i <= n-len(signature); i++ {
+			match := true
+			for j := 0; j < len(signature); j++ {
+				if buf[i+j] != signature[j] {
+					match = false
+					break
+				}
+			}
+			if match {
+				offsets = append(offsets, off+int64(i))
+			}
 		}
-		seen[r] = struct{}{}
-		result = append(result, r)
 	}
-	return result
+	return offsets
 }
 
-func appendVisibleStatesForRune(dst []rune, r rune) []rune {
-	if r < 0xAC00 || r > 0xD7A3 {
-		if r != ' ' && r != '\n' && r != '\t' {
-			dst = append(dst, r)
-		}
-		return dst
+func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
+	signature := signatureForKeyEntry(spec)
+	offsets := searchFileForSignature(kp.diskPath, signature)
+	if len(offsets) == 0 {
+		return fmt.Errorf("key entry not found: code=%d unicode=U+%04X qt=0x%08x mod=%d", spec.code, spec.unicode, spec.qtcode, spec.mod)
 	}
-
-	syllable := int(r - 0xAC00)
-	cho := syllable / (21 * 28)
-	jung := (syllable / 28) % 21
-	jong := syllable % 28
-
-	dst = append(dst, choseongToJamo[cho])
-	if split := splitCompoundJungseong(jung); split.ok {
-		dst = append(dst, composeSyllable(cho, int(split.first), 0))
+	kp.keyEntries[keyEntryKey(spec.code, spec.mod)] = keyPatchInfo{
+		fileOffsets: offsets,
+		origUnicode: spec.unicode,
+		origQtcode:  spec.qtcode,
 	}
-
-	base := composeSyllable(cho, jung, 0)
-	dst = append(dst, base)
-
-	if jong != 0 {
-		if split := splitCompoundJongseong(jong); split.ok {
-			dst = append(dst, composeSyllable(cho, jung, int(split.first)))
-		}
-		dst = append(dst, composeSyllable(cho, jung, jong))
-	}
-
-	return dst
+	return nil
 }
 
-func preloadedVisibleRunes(target string) []rune {
-	states := make([]rune, 0, len([]rune(target))*3)
-	for _, r := range target {
-		states = appendVisibleStatesForRune(states, r)
-	}
-	return orderedUniqueRunes(string(states))
-}
-
-func combinedPreloadedRunes(target string) []rune {
-	chars := make([]rune, 0, len(preloadedMappedChars)+len([]rune(target))*3)
-	chars = append(chars, preloadedMappedChars...)
-	chars = append(chars, preloadedVisibleRunes(target)...)
-	return orderedUniqueRunes(string(chars))
-}
-
-func (kp *KeymapPatcher) initSpecsEntries(specs []keyPatchSpec) error {
-	for _, spec := range specs {
+func (kp *KeymapPatcher) initPreloadEntries() error {
+	for _, spec := range allPreloadKeyPatchSpecs() {
 		if err := kp.initKeyEntry(spec); err != nil {
 			return err
 		}
@@ -612,217 +497,10 @@ func (kp *KeymapPatcher) initSpecsEntries(specs []keyPatchSpec) error {
 	return nil
 }
 
-func moveRuneToBack(items []rune, r rune) []rune {
-	out := make([]rune, 0, len(items))
-	for _, item := range items {
-		if item != r {
-			out = append(out, item)
-		}
-	}
-	return append(out, r)
-}
-
-func appendUniqueRune(items []rune, r rune) []rune {
-	for _, item := range items {
-		if item == r {
-			return items
-		}
-	}
-	return append(items, r)
-}
-
-func (d *Daemon) setupMappedKeyboard(name string, chars []rune) (mappedKeyboard, error) {
-	specs := allPlainKeyPatchSpecs()
-	if len(chars) == 0 {
-		return mappedKeyboard{}, nil
-	}
-	if len(chars) > len(specs) {
-		return mappedKeyboard{}, fmt.Errorf("chars=%d exceeds available keys=%d", len(chars), len(specs))
-	}
-
-	charToKey := make(map[rune]mappedKey, len(chars))
-	usedCodes := make([]uint16, 0, len(chars))
-	for i, char := range chars {
-		code := specs[i].code
-		if err := d.patcher.writeKeyToDisk(code, uint16(char), uint32(char)); err != nil {
-			for _, used := range usedCodes {
-				_ = d.patcher.restoreKey(used)
-			}
-			return mappedKeyboard{}, fmt.Errorf("mapped write %s for U+%04X: %w", keyCodeName(code), char, err)
-		}
-		charToKey[char] = mappedKey{code: code}
-		usedCodes = append(usedCodes, code)
-		log.Printf("[PRELOAD] %s => U+%04X (%c)", keyCodeName(code), char, char)
-	}
-
-	f, err := createUinputDevice(name)
-	if err != nil {
-		for _, used := range usedCodes {
-			_ = d.patcher.restoreKey(used)
-		}
-		return mappedKeyboard{}, fmt.Errorf("create mapped keyboard: %w", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-	for _, used := range usedCodes {
-		if err := d.patcher.restoreKey(used); err != nil {
-			log.Printf("[PRELOAD] restore %s failed: %v", keyCodeName(used), err)
-		}
-	}
-
-	return mappedKeyboard{fd: f, charToKey: charToKey}, nil
-}
-
-func (d *Daemon) setupPreloadedKeyboards(target string) error {
-	chars := combinedPreloadedRunes(target)
-	specs := allPlainKeyPatchSpecs()
-	if len(chars) == 0 {
-		return nil
-	}
-	capacity := len(specs)
-	maxChars := capacity * maxPreloadedKeyboards
-	if len(chars) > maxChars {
-		chars = chars[:maxChars]
-	}
-
-	for i := 0; i < maxPreloadedKeyboards; i++ {
-		start := i * capacity
-		if start >= len(chars) {
-			break
-		}
-		end := start + capacity
-		if end > len(chars) {
-			end = len(chars)
-		}
-		kb, err := d.setupMappedKeyboard(fmt.Sprintf("Hangul Preloaded Keyboard %d", i), chars[start:end])
-		if err != nil {
-			return fmt.Errorf("preloaded keyboard %d: %w", i, err)
-		}
-		d.preloadedKeyboards[i] = kb
-		log.Printf("[PRELOAD] device %d ready chars=%d", i, len(chars[start:end]))
-	}
-	log.Printf("[PRELOAD] devices ready for visible target chars=%d text=%q", len(chars), target)
-	return nil
-}
-
-func (d *Daemon) lookupPreloadedChar(char rune) (*os.File, mappedKey, bool) {
-	for i := range d.preloadedKeyboards {
-		kb := &d.preloadedKeyboards[i]
-		if kb.fd == nil {
-			continue
-		}
-		if key, ok := kb.charToKey[char]; ok {
-			return kb.fd, key, true
-		}
-	}
-	return nil, mappedKey{}, false
-}
-
-func (d *Daemon) isFallbackCached(char rune) bool {
-	if d.fallbackCache.fd == nil {
-		return false
-	}
-	_, ok := d.fallbackCache.charToKey[char]
-	return ok
-}
-
-func (d *Daemon) touchFallbackChar(char rune) {
-	if d.isFallbackCached(char) {
-		d.fallbackCache.lru = moveRuneToBack(d.fallbackCache.lru, char)
-	}
-}
-
-func (d *Daemon) queueFallbackChar(char rune) {
-	d.fallbackPending = appendUniqueRune(d.fallbackPending, char)
-}
-
-func (d *Daemon) rebuildFallbackCache(ensure []rune) error {
-	capacity := len(allPlainKeyPatchSpecs())
-	if capacity == 0 {
-		return nil
-	}
-	ensureSet := make(map[rune]struct{}, len(ensure))
-	desired := make([]rune, 0, capacity)
-	for _, char := range ensure {
-		if _, ok := ensureSet[char]; ok {
-			continue
-		}
-		ensureSet[char] = struct{}{}
-		desired = append(desired, char)
-	}
-	for i := len(d.fallbackCache.lru) - 1; i >= 0 && len(desired) < capacity; i-- {
-		char := d.fallbackCache.lru[i]
-		if _, ok := ensureSet[char]; ok {
-			continue
-		}
-		desired = append(desired, char)
-		ensureSet[char] = struct{}{}
-	}
-	if len(desired) > capacity {
-		desired = desired[:capacity]
-	}
-	for i, j := 0, len(desired)-1; i < j; i, j = i+1, j-1 {
-		desired[i], desired[j] = desired[j], desired[i]
-	}
-
-	kb, err := d.setupMappedKeyboard("Hangul Fallback Cache", desired)
-	if err != nil {
-		return err
-	}
-	if d.fallbackCache.fd != nil {
-		_ = ioctl(d.fallbackCache.fd.Fd(), UI_DEV_DESTROY, 0)
-		d.fallbackCache.fd.Close()
-	}
-	d.fallbackCache = fallbackCache{fd: kb.fd, charToKey: kb.charToKey, lru: desired}
-	return nil
-}
-
-func (d *Daemon) flushFallbackPending() {
-	if len(d.fallbackPending) == 0 {
-		return
-	}
-	pending := append([]rune(nil), d.fallbackPending...)
-	d.fallbackPending = d.fallbackPending[:0]
-	need := make([]rune, 0, len(pending))
-	for _, char := range pending {
-		if _, _, ok := d.lookupPreloadedChar(char); ok {
-			continue
-		}
-		if d.isFallbackCached(char) {
-			continue
-		}
-		need = appendUniqueRune(need, char)
-	}
-	if len(need) > 0 {
-		if err := d.rebuildFallbackCache(need); err != nil {
-			log.Printf("[FALLBACK] cache rebuild 실패: %v", err)
-			for _, char := range pending {
-				d.outputChar(char, 0, false)
-			}
-			return
-		}
-	}
-	for _, char := range pending {
-		if fd, key, ok := d.lookupPreloadedChar(char); ok {
-			d.sendKeyTapOn(fd, key.code)
-			continue
-		}
-		if key, ok := d.fallbackCache.charToKey[char]; ok {
-			d.sendKeyTapOn(d.fallbackCache.fd, key.code)
-			d.touchFallbackChar(char)
-			continue
-		}
-		// conservative fallback if cache rebuild did not retain the char
-		d.outputChar(char, 0, false)
-	}
-}
-
 func (kp *KeymapPatcher) writeKeyToDisk(code uint16, unicode uint16, qtcode uint32) error {
-	info, ok := kp.keyEntries[keyEntryID(code, 0)]
+	entry, ok := kp.keyEntries[keyEntryKey(code, 0)]
 	if !ok {
-		if code == KEY_Q {
-			return kp.writeToDisk(unicode, qtcode)
-		}
-		return fmt.Errorf("key entry not initialized: code=%d", code)
+		return fmt.Errorf("key entry missing: %s", keyCodeName(code))
 	}
 	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
 	if err != nil {
@@ -835,7 +513,7 @@ func (kp *KeymapPatcher) writeKeyToDisk(code uint16, unicode uint16, qtcode uint
 	var qtBuf [4]byte
 	binary.LittleEndian.PutUint32(qtBuf[:], qtcode)
 
-	for _, fOff := range info.fileOffsets {
+	for _, fOff := range entry.fileOffsets {
 		if _, err := f.WriteAt(uniBuf[:], fOff+2); err != nil {
 			return fmt.Errorf("write unicode at 0x%x: %w", fOff+2, err)
 		}
@@ -846,16 +524,43 @@ func (kp *KeymapPatcher) writeKeyToDisk(code uint16, unicode uint16, qtcode uint
 	return nil
 }
 
-func (kp *KeymapPatcher) restoreKey(code uint16) error {
-	info, ok := kp.keyEntries[keyEntryID(code, 0)]
+func (kp *KeymapPatcher) writeKeyEntryToDisk(code uint16, mod byte, unicode uint16, qtcode uint32) error {
+	entry, ok := kp.keyEntries[keyEntryKey(code, mod)]
 	if !ok {
-		if code == KEY_Q {
-			kp.restoreDisk()
-			return nil
-		}
-		return fmt.Errorf("key entry not initialized: code=%d", code)
+		return fmt.Errorf("key entry missing: %s mod=%d", keyCodeName(code), mod)
 	}
-	return kp.writeKeyToDisk(code, info.origUnicode, info.origQtcode)
+	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open %s for write: %w", kp.diskPath, err)
+	}
+	defer f.Close()
+
+	var uniBuf [2]byte
+	binary.LittleEndian.PutUint16(uniBuf[:], unicode)
+	var qtBuf [4]byte
+	binary.LittleEndian.PutUint32(qtBuf[:], qtcode)
+
+	for _, fOff := range entry.fileOffsets {
+		if _, err := f.WriteAt(uniBuf[:], fOff+2); err != nil {
+			return fmt.Errorf("write unicode at 0x%x: %w", fOff+2, err)
+		}
+		if _, err := f.WriteAt(qtBuf[:], fOff+4); err != nil {
+			return fmt.Errorf("write qtcode at 0x%x: %w", fOff+4, err)
+		}
+	}
+	return nil
+}
+
+func (kp *KeymapPatcher) restoreKeyEntry(code uint16, mod byte) error {
+	entry, ok := kp.keyEntries[keyEntryKey(code, mod)]
+	if !ok {
+		return fmt.Errorf("key entry missing: %s mod=%d", keyCodeName(code), mod)
+	}
+	return kp.writeKeyEntryToDisk(code, mod, entry.origUnicode, entry.origQtcode)
+}
+
+func (kp *KeymapPatcher) restoreKey(code uint16) error {
+	return kp.restoreKeyEntry(code, 0)
 }
 
 func (kp *KeymapPatcher) writeToDisk(unicode uint16, qtcode uint32) error {
@@ -1063,20 +768,12 @@ type HangulState struct {
 	jong  int
 }
 
-type cachedKeyboard struct {
-	fd   *os.File
-	char rune
-}
-
 type Daemon struct {
-	mu              sync.Mutex
-	inputFd         *os.File
-	uinputFd        *os.File
-	preloadedKeyboards [maxPreloadedKeyboards]mappedKeyboard
-	fallbackCache  fallbackCache
-	cachedKeyboards [2]cachedKeyboard
-	fallbackPending []rune
-	korean          bool
+	mu               sync.Mutex
+	inputFd          *os.File
+	uinputFd         *os.File
+	preloadedKeyboards []mappedKeyboard
+	korean           bool
 	shifted        bool
 	ctrl_or_alt    bool
 	pendingVisible bool
@@ -1133,7 +830,6 @@ func createUinputDevice(name string) (*os.File, error) {
 		f.Close()
 		return nil, fmt.Errorf("UI_DEV_CREATE: %w", err)
 	}
-
 	return f, nil
 }
 
@@ -1170,10 +866,7 @@ func (d *Daemon) recreateUinput() error {
 	return nil
 }
 
-func writeEventToFile(f *os.File, typ uint16, code uint16, value int32) error {
-	if f == nil {
-		return fmt.Errorf("nil uinput file")
-	}
+func writeEventTo(f *os.File, typ uint16, code uint16, value int32) error {
 	var buf [inputEventSize]byte
 	binary.LittleEndian.PutUint64(buf[0:8], 0)
 	binary.LittleEndian.PutUint64(buf[8:16], 0)
@@ -1185,89 +878,61 @@ func writeEventToFile(f *os.File, typ uint16, code uint16, value int32) error {
 	return err
 }
 
+func sendKeyTapOn(f *os.File, code uint16) {
+	_ = writeEventTo(f, EV_KEY, code, keyPress)
+	_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+	time.Sleep(2 * time.Millisecond)
+	_ = writeEventTo(f, EV_KEY, code, keyRelease)
+	_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+}
+
+func sendMappedKeyTapOn(f *os.File, key mappedKey) {
+	if !key.shifted {
+		sendKeyTapOn(f, key.code)
+		return
+	}
+	_ = writeEventTo(f, EV_KEY, KEY_LEFTSHIFT, keyPress)
+	_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+	time.Sleep(1 * time.Millisecond)
+	_ = writeEventTo(f, EV_KEY, key.code, keyPress)
+	_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+	time.Sleep(2 * time.Millisecond)
+	_ = writeEventTo(f, EV_KEY, key.code, keyRelease)
+	_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+	time.Sleep(1 * time.Millisecond)
+	_ = writeEventTo(f, EV_KEY, KEY_LEFTSHIFT, keyRelease)
+	_ = writeEventTo(f, EV_SYN, SYN_REPORT, 0)
+}
+
 func (d *Daemon) writeEvent(typ uint16, code uint16, value int32) error {
-	return writeEventToFile(d.uinputFd, typ, code, value)
+	return writeEventTo(d.uinputFd, typ, code, value)
 }
 
 func (d *Daemon) sendKey(code uint16, press bool) {
-	d.sendKeyOn(d.uinputFd, code, press)
-}
-
-func (d *Daemon) sendKeyOn(f *os.File, code uint16, press bool) {
 	val := int32(keyRelease)
 	if press {
 		val = keyPress
 	}
-	_ = writeEventToFile(f, EV_KEY, code, val)
-	_ = writeEventToFile(f, EV_SYN, SYN_REPORT, 0)
+	_ = d.writeEvent(EV_KEY, code, val)
+	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
 }
 
 func (d *Daemon) sendKeyTap(code uint16) {
-	d.sendKeyTapOn(d.uinputFd, code)
-}
-
-func (d *Daemon) sendKeyTapOn(f *os.File, code uint16) {
-	d.sendKeyOn(f, code, true)
-	d.sendKeyOn(f, code, false)
+	d.sendKey(code, true)
+	d.sendKey(code, false)
 }
 
 func (d *Daemon) sendKeySequence(codes ...uint16) {
-	d.sendKeySequenceOn(d.uinputFd, codes...)
-}
-
-func (d *Daemon) sendKeySequenceOn(f *os.File, codes ...uint16) {
 	for _, code := range codes {
-		_ = writeEventToFile(f, EV_KEY, code, keyPress)
-		_ = writeEventToFile(f, EV_KEY, code, keyRelease)
+		_ = d.writeEvent(EV_KEY, code, keyPress)
+		_ = d.writeEvent(EV_KEY, code, keyRelease)
 	}
-	_ = writeEventToFile(f, EV_SYN, SYN_REPORT, 0)
+	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
 }
 
 func (d *Daemon) sendBackspace() {
 	d.sendKeyTap(KEY_BACKSPACE)
 	time.Sleep(1 * time.Millisecond)
-}
-
-func (d *Daemon) cachedKeyboardFor(char rune) *os.File {
-	for i := range d.cachedKeyboards {
-		if d.cachedKeyboards[i].fd != nil && d.cachedKeyboards[i].char == char {
-			return d.cachedKeyboards[i].fd
-		}
-	}
-	return nil
-}
-
-func (d *Daemon) provisionCachedKeyboard(char rune) *os.File {
-	slot := -1
-	for i := range d.cachedKeyboards {
-		if d.cachedKeyboards[i].fd == nil {
-			slot = i
-			break
-		}
-	}
-	if slot == -1 {
-		return nil
-	}
-	if err := d.patcher.writeToDisk(uint16(char), uint32(char)); err != nil {
-		log.Printf("[CACHE] 디스크 쓰기 오류: %v", err)
-		return nil
-	}
-	f, err := createUinputDevice(fmt.Sprintf("Hangul Cached %d", slot))
-	if err != nil {
-		log.Printf("[CACHE] 디바이스 생성 오류: %v", err)
-		return nil
-	}
-	time.Sleep(80 * time.Millisecond)
-	d.cachedKeyboards[slot] = cachedKeyboard{fd: f, char: char}
-	log.Printf("[CACHE] 슬롯 %d에 U+%04X 캐시", slot, char)
-	return f
-}
-
-func (d *Daemon) cachedOrProvisionedKeyboard(char rune) *os.File {
-	if f := d.cachedKeyboardFor(char); f != nil {
-		return f
-	}
-	return d.provisionCachedKeyboard(char)
 }
 
 func (d *Daemon) passthrough(ev InputEvent) {
@@ -1280,72 +945,20 @@ func (d *Daemon) passthrough(ev InputEvent) {
 // 3. 백스페이스 전송 (필요 시)
 // 4. KEY_Q 전송 → xochitl이 패치된 문자로 표시
 func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
+	if fd, mapped, ok := d.lookupPreloadedChar(char); ok {
+		for i := 0; i < backspaces; i++ {
+			d.sendKeyTap(KEY_BACKSPACE)
+		}
+		if backspaces > 0 {
+			time.Sleep(2 * time.Millisecond)
+		}
+		sendMappedKeyTapOn(fd, mapped)
+		return
+	}
+
 	if d.patcher == nil {
 		log.Printf("[OUTPUT] 패처 미초기화")
 		return
-	}
-
-	if fd, key, ok := d.lookupPreloadedChar(char); ok {
-		if batchReplace && backspaces == 1 {
-			if key.shifted {
-				d.sendKeySequenceOn(fd, KEY_BACKSPACE, KEY_LEFTSHIFT, key.code)
-			} else {
-				d.sendKeySequenceOn(fd, KEY_BACKSPACE, key.code)
-			}
-		} else {
-			for i := 0; i < backspaces; i++ {
-				d.sendKeyTapOn(fd, KEY_BACKSPACE)
-			}
-			if backspaces > 0 {
-				time.Sleep(2 * time.Millisecond)
-			}
-			if key.shifted {
-				d.sendKeyOn(fd, KEY_LEFTSHIFT, true)
-				d.sendKeyTapOn(fd, key.code)
-				d.sendKeyOn(fd, KEY_LEFTSHIFT, false)
-			} else {
-				d.sendKeyTapOn(fd, key.code)
-			}
-		}
-		d.lastChar = char
-		return
-	}
-
-	if d.fallbackCache.fd != nil {
-		if key, ok := d.fallbackCache.charToKey[char]; ok {
-			if batchReplace && backspaces == 1 {
-				d.sendKeySequenceOn(d.fallbackCache.fd, KEY_BACKSPACE, key.code)
-			} else {
-				for i := 0; i < backspaces; i++ {
-					d.sendKeyTapOn(d.fallbackCache.fd, KEY_BACKSPACE)
-				}
-				if backspaces > 0 {
-					time.Sleep(2 * time.Millisecond)
-				}
-				d.sendKeyTapOn(d.fallbackCache.fd, key.code)
-			}
-			d.touchFallbackChar(char)
-			d.lastChar = char
-			return
-		}
-	}
-
-	if enablePerCharCache {
-		if target := d.cachedOrProvisionedKeyboard(char); target != nil {
-			if batchReplace && backspaces == 1 {
-				d.sendKeySequenceOn(target, KEY_BACKSPACE, KEY_Q)
-			} else {
-				for i := 0; i < backspaces; i++ {
-					d.sendKeyTapOn(target, KEY_BACKSPACE)
-				}
-				if backspaces > 0 {
-					time.Sleep(2 * time.Millisecond)
-				}
-				d.sendKeyTapOn(target, KEY_Q)
-			}
-			d.lastChar = char
-			return
-		}
 	}
 
 	if char != d.lastChar {
@@ -1386,6 +999,159 @@ func (d *Daemon) restoreKeymap() {
 		d.lastChar = 0
 		log.Printf("[RESTORE] 원본 키맵 복원 완료")
 	}
+}
+
+
+func orderedUniqueRunes(input []rune) []rune {
+	seen := make(map[rune]struct{}, len(input))
+	out := make([]rune, 0, len(input))
+	for _, r := range input {
+		if r == 0 || r == ' ' || r == '\n' || r == '\t' {
+			continue
+		}
+		if _, ok := seen[r]; ok {
+			continue
+		}
+		seen[r] = struct{}{}
+		out = append(out, r)
+	}
+	return out
+}
+
+func appendVisibleRune(out *[]rune, r rune) {
+	if r != 0 {
+		*out = append(*out, r)
+	}
+}
+
+func buildDevice0PreloadChars() []rune {
+	out := make([]rune, 0, 90)
+	out = append(out, choseongToJamo...)
+	out = append(out, jungseongToJamo...)
+	out = append(out, []rune("가나다라마바사아자하거너더러머버서어저허고노도로모보소오조호구누두루무부수우주후기니디리미비시이지히")...)
+	return orderedUniqueRunes(out)
+}
+
+func buildClosedSyllablePreloadChars(jong int) []rune {
+	chos := []int{0, 2, 3, 5, 6, 7, 9, 11, 12, 18}
+	jungs := []int{0, 4, 8, 13, 20, 1, 6, 12, 17}
+	out := make([]rune, 0, len(chos)*len(jungs))
+	for _, cho := range chos {
+		for _, jung := range jungs {
+			out = append(out, composeSyllable(cho, jung, jong))
+		}
+	}
+	return out
+}
+
+func buildPreloadDeviceCharSets() ([][]rune, error) {
+	sets := [][]rune{
+		buildDevice0PreloadChars(),
+		buildClosedSyllablePreloadChars(4),  // ㄴ 받침
+		buildClosedSyllablePreloadChars(8),  // ㄹ 받침
+		buildClosedSyllablePreloadChars(16), // ㅁ 받침
+		buildClosedSyllablePreloadChars(21), // ㅇ 받침
+		buildClosedSyllablePreloadChars(17), // ㅂ 받침
+	}
+	if len(sets) != preloadedDeviceCount {
+		return nil, fmt.Errorf("preload device count mismatch: got=%d want=%d", len(sets), preloadedDeviceCount)
+	}
+	seen := make(map[rune]int)
+	for i, chars := range sets {
+		chars = orderedUniqueRunes(chars)
+		if len(chars) == 0 {
+			return nil, fmt.Errorf("preload device %d has no chars", i)
+		}
+		for _, char := range chars {
+			if prev, ok := seen[char]; ok {
+				return nil, fmt.Errorf("duplicate preload char U+%04X (%c) across devices %d and %d", char, char, prev, i)
+			}
+			seen[char] = i
+		}
+		sets[i] = chars
+	}
+	return sets, nil
+}
+
+func (d *Daemon) setupPreloadedKeyboards() error {
+	if err := d.patcher.initPreloadEntries(); err != nil {
+		return fmt.Errorf("init preload entries: %w", err)
+	}
+	charSets, err := buildPreloadDeviceCharSets()
+	if err != nil {
+		return err
+	}
+	slots := allPreloadKeyPatchSpecs()
+	keyboards := make([]mappedKeyboard, 0, len(charSets))
+	totalChars := 0
+	for idx, chars := range charSets {
+		if len(chars) > len(slots) {
+			return fmt.Errorf("preload device %d chars=%d exceeds available slots=%d", idx, len(chars), len(slots))
+		}
+		charToKey := make(map[rune]mappedKey, len(chars))
+		usedSpecs := make([]keyPatchSpec, 0, len(chars))
+		for i, char := range chars {
+			spec := slots[i]
+			if err := d.patcher.writeKeyEntryToDisk(spec.code, spec.mod, uint16(char), uint32(char)); err != nil {
+				for _, used := range usedSpecs {
+					_ = d.patcher.restoreKeyEntry(used.code, used.mod)
+				}
+				for _, kb := range keyboards {
+					if kb.fd != nil {
+						_ = ioctl(kb.fd.Fd(), UI_DEV_DESTROY, 0)
+						_ = kb.fd.Close()
+					}
+				}
+				return fmt.Errorf("preload device %d write %s shift=%t for U+%04X: %w", idx, keyCodeName(spec.code), spec.mod != 0, char, err)
+			}
+			mapped := mappedKeyFromSpec(spec)
+			charToKey[char] = mapped
+			usedSpecs = append(usedSpecs, spec)
+		}
+
+		f, err := createUinputDevice(fmt.Sprintf("Hangul Preloaded %d", idx))
+		if err != nil {
+			for _, used := range usedSpecs {
+				_ = d.patcher.restoreKeyEntry(used.code, used.mod)
+			}
+			for _, kb := range keyboards {
+				if kb.fd != nil {
+					_ = ioctl(kb.fd.Fd(), UI_DEV_DESTROY, 0)
+					_ = kb.fd.Close()
+				}
+			}
+			return fmt.Errorf("create preload device %d: %w", idx, err)
+		}
+		time.Sleep(120 * time.Millisecond)
+		for _, used := range usedSpecs {
+			if err := d.patcher.restoreKeyEntry(used.code, used.mod); err != nil {
+				log.Printf("[PRELOAD %d] restore %s shift=%t failed: %v", idx, keyCodeName(used.code), used.mod != 0, err)
+			}
+		}
+		keyboards = append(keyboards, mappedKeyboard{fd: f, charToKey: charToKey})
+		totalChars += len(chars)
+		log.Printf("[PRELOAD %d] device ready chars=%d", idx, len(chars))
+	}
+	d.preloadedKeyboards = keyboards
+	log.Printf("[PRELOAD] total devices=%d total chars=%d", len(keyboards), totalChars)
+	return nil
+}
+
+func (d *Daemon) lookupPreloadedChar(char rune) (*os.File, mappedKey, bool) {
+	for _, kb := range d.preloadedKeyboards {
+		if kb.fd == nil {
+			continue
+		}
+		if mapped, ok := kb.charToKey[char]; ok {
+			return kb.fd, mapped, true
+		}
+	}
+	return nil, mappedKey{}, false
+}
+
+func (d *Daemon) isPreloadedChar(char rune) bool {
+	_, _, ok := d.lookupPreloadedChar(char)
+	return ok
 }
 
 func (d *Daemon) cancelIdleFlush() {
@@ -1437,18 +1203,6 @@ func (d *Daemon) currentPendingChar() (rune, bool) {
 	}
 }
 
-func (d *Daemon) isPreloadedChar(char rune) bool {
-	_, _, ok := d.lookupPreloadedChar(char)
-	return ok
-}
-
-func (d *Daemon) isFastChar(char rune) bool {
-	if d.isPreloadedChar(char) {
-		return true
-	}
-	return d.isFallbackCached(char)
-}
-
 func (d *Daemon) showPending() {
 	char, ok := d.currentPendingChar()
 	if !ok {
@@ -1457,12 +1211,7 @@ func (d *Daemon) showPending() {
 	if d.pendingVisible && d.visibleChar == char {
 		return
 	}
-	if d.isFastChar(char) {
-		d.commitPendingChar(char)
-		return
-	}
-	d.queueFallbackChar(char)
-	d.flushFallbackPending()
+	d.commitPendingChar(char)
 }
 
 func (d *Daemon) maybePreviewCurrent() {
@@ -1474,7 +1223,7 @@ func (d *Daemon) maybePreviewCurrent() {
 		if !d.pendingVisible || d.visibleChar != char {
 			d.commitPendingChar(char)
 		} else {
-			d.lastPreviewAt = time.Now()
+			d.scheduleIdleFlush()
 		}
 		return
 	}
@@ -1552,13 +1301,8 @@ func (d *Daemon) renderBackspaceStep(char rune) {
 
 func (d *Daemon) commitCurrent() {
 	if char, ok := d.currentPendingChar(); ok {
-		if d.isFastChar(char) {
-			if !d.pendingVisible || d.visibleChar != char {
-				d.commitPendingChar(char)
-			}
-		} else {
-			d.queueFallbackChar(char)
-			d.flushFallbackPending()
+		if !d.pendingVisible || d.visibleChar != char {
+			d.commitPendingChar(char)
 		}
 	}
 	d.resetCompose()
@@ -1940,137 +1684,6 @@ func waitForKeyboard() string {
 	}
 }
 
-func readStatusField(pid int, field string) string {
-	if pid <= 0 {
-		return "n/a"
-	}
-	f, err := os.Open(fmt.Sprintf("/proc/%d/status", pid))
-	if err != nil {
-		return "n/a"
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	prefix := field + ":"
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
-		}
-	}
-	return "n/a"
-}
-
-func readMemAvailable() string {
-	f, err := os.Open("/proc/meminfo")
-	if err != nil {
-		return "n/a"
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "MemAvailable:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "MemAvailable:"))
-		}
-	}
-	return "n/a"
-}
-
-func logProcessMemory(tag string, pid int, name string) {
-	log.Printf("[CAPMEM] %s %s pid=%d VmRSS=%s VmSize=%s", tag, name, pid, readStatusField(pid, "VmRSS"), readStatusField(pid, "VmSize"))
-}
-
-func (d *Daemon) logCapacityMemory(tag string) {
-	xochitlPID, err := findXochitlPID()
-	if err != nil {
-		xochitlPID = 0
-	}
-	log.Printf("[CAPMEM] %s MemAvailable=%s", tag, readMemAvailable())
-	logProcessMemory(tag, os.Getpid(), "hangul-daemon")
-	if xochitlPID > 0 {
-		logProcessMemory(tag, xochitlPID, "xochitl")
-	} else {
-		log.Printf("[CAPMEM] %s xochitl pid unavailable", tag)
-	}
-}
-
-func (d *Daemon) runDeviceCapacityProbe() error {
-	log.Printf("[CAP] device capacity probe start (max=%d)", deviceCapacityProbeMax)
-	d.logCapacityMemory("before")
-	devices := make([]*os.File, 0, deviceCapacityProbeMax)
-	defer func() {
-		for i := len(devices) - 1; i >= 0; i-- {
-			_ = ioctl(devices[i].Fd(), UI_DEV_DESTROY, 0)
-			devices[i].Close()
-		}
-		log.Printf("[CAP] device capacity probe cleanup complete (%d devices)", len(devices))
-		time.Sleep(150 * time.Millisecond)
-		d.logCapacityMemory("after_cleanup")
-	}()
-
-	for i := 0; i < deviceCapacityProbeMax; i++ {
-		name := fmt.Sprintf("Hangul Capacity %02d", i)
-		f, err := createUinputDevice(name)
-		if err != nil {
-			log.Printf("[CAP] create failed at index=%d: %v", i, err)
-			d.logCapacityMemory("create_failed")
-			return nil
-		}
-		devices = append(devices, f)
-		log.Printf("[CAP] created device index=%d name=%s", i, name)
-		time.Sleep(40 * time.Millisecond)
-	}
-
-	d.logCapacityMemory("after_create")
-	log.Printf("[CAP] reached configured max=%d without create failure", len(devices))
-	return nil
-}
-
-func (d *Daemon) runMultiDeviceProbe() error {
-	if d.patcher == nil {
-		return fmt.Errorf("patcher not initialized")
-	}
-	log.Println("[PROBE] multi-device probe start")
-	defer d.patcher.restoreDisk()
-
-	if err := d.patcher.writeToDisk(uint16('가'), uint32('가')); err != nil {
-		return fmt.Errorf("probe patch A: %w", err)
-	}
-	devA, err := createUinputDevice("Probe A")
-	if err != nil {
-		return fmt.Errorf("probe create A: %w", err)
-	}
-	defer func() {
-		_ = ioctl(devA.Fd(), UI_DEV_DESTROY, 0)
-		devA.Close()
-	}()
-	time.Sleep(80 * time.Millisecond)
-
-	if err := d.patcher.writeToDisk(uint16('나'), uint32('나')); err != nil {
-		return fmt.Errorf("probe patch B: %w", err)
-	}
-	devB, err := createUinputDevice("Probe B")
-	if err != nil {
-		return fmt.Errorf("probe create B: %w", err)
-	}
-	defer func() {
-		_ = ioctl(devB.Fd(), UI_DEV_DESTROY, 0)
-		devB.Close()
-	}()
-	time.Sleep(80 * time.Millisecond)
-
-	log.Println("[PROBE] sending KEY_Q on Probe A (expected: 가)")
-	d.sendKeyTapOn(devA, KEY_Q)
-	time.Sleep(200 * time.Millisecond)
-	log.Println("[PROBE] sending KEY_Q on Probe B (expected: 나)")
-	d.sendKeyTapOn(devB, KEY_Q)
-	time.Sleep(200 * time.Millisecond)
-	log.Println("[PROBE] probe complete; verify whether output was '가나' or duplicated")
-	return nil
-}
-
 func (d *Daemon) run(devicePath string) error {
 	// 패처 초기화 (디스크에서 KEY_Q 오프셋 검색)
 	d.patcher = &KeymapPatcher{}
@@ -2085,41 +1698,12 @@ func (d *Daemon) run(devicePath string) error {
 		log.Printf("xochitl PID: %d", pid)
 	}
 
-	if enableMultiDeviceProbe {
-		if err := d.runMultiDeviceProbe(); err != nil {
-			return fmt.Errorf("multi-device probe: %w", err)
-		}
-	}
-	if enableDeviceCapacityProbe {
-		if err := d.runDeviceCapacityProbe(); err != nil {
-			return fmt.Errorf("device capacity probe: %w", err)
-		}
-	}
-
-	// 다음 단계용 기반: 여러 알파벳 키 엔트리를 찾아 둘 수 있는지 확인
-	if err := d.patcher.initSpecsEntries(allPlainKeyPatchSpecs()); err != nil {
-		log.Printf("경고: plain 엔트리 초기화 실패 (%v)", err)
-	} else {
-		if enableAlphaEntryProbe {
-			log.Println("[ALPHA] plain entry probe start")
-			d.patcher.probeEntries("ALPHA", alphaKeyPatchSpecs)
-			d.patcher.probeEntries("ALPHA", extraKeyPatchSpecs)
-			log.Println("[ALPHA] plain entry probe complete")
-		}
-		if enableShiftEntryProbe {
-			log.Println("[SHIFT] shift entry probe start")
-			d.patcher.probeEntries("SHIFT", shiftKeyPatchSpecs)
-			log.Println("[SHIFT] shift entry probe complete")
-		}
-	}
-
-	// 초기 uinput 디바이스 생성
+	// 기본 영문 uinput 디바이스 생성
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("setup uinput: %w", err)
 	}
-
-	if err := d.setupPreloadedKeyboards(preloadedTargetSentence); err != nil {
-		log.Printf("경고: preloaded keyboard setup 실패 (%v)", err)
+	if err := d.setupPreloadedKeyboards(); err != nil {
+		return fmt.Errorf("setup preloaded keyboards: %w", err)
 	}
 
 	d.korean = true
@@ -2188,22 +1772,10 @@ func (d *Daemon) cleanup() {
 	for i := range d.preloadedKeyboards {
 		if d.preloadedKeyboards[i].fd != nil {
 			_ = ioctl(d.preloadedKeyboards[i].fd.Fd(), UI_DEV_DESTROY, 0)
-			d.preloadedKeyboards[i].fd.Close()
-			d.preloadedKeyboards[i] = mappedKeyboard{}
+			_ = d.preloadedKeyboards[i].fd.Close()
 		}
 	}
-	if d.fallbackCache.fd != nil {
-		_ = ioctl(d.fallbackCache.fd.Fd(), UI_DEV_DESTROY, 0)
-		d.fallbackCache.fd.Close()
-		d.fallbackCache = fallbackCache{}
-	}
-	for i := range d.cachedKeyboards {
-		if d.cachedKeyboards[i].fd != nil {
-			_ = ioctl(d.cachedKeyboards[i].fd.Fd(), UI_DEV_DESTROY, 0)
-			d.cachedKeyboards[i].fd.Close()
-			d.cachedKeyboards[i] = cachedKeyboard{}
-		}
-	}
+	d.preloadedKeyboards = nil
 	if d.patcher != nil {
 		d.patcher.restoreDisk()
 	}
