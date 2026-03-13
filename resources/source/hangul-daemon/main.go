@@ -1560,9 +1560,6 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 		return
 	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	if ev.Value == keyPress || ev.Value == keyRepeat {
 		if isAlphaKey(ev.Code) {
 			d.handleKoreanKey(ev.Code, true)
