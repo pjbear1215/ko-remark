@@ -102,7 +102,7 @@ const (
 	debugLogging           = false
 	destroyWait            = 30 * time.Millisecond
 	createWait             = 80 * time.Millisecond
-	enableReloadProbe      = false
+	enableReloadProbe      = true
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
