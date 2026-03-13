@@ -100,9 +100,9 @@ const (
 	maxKeyCode             = KEY_CAPSLOCK
 	invalidIndex8          = int8(-1)
 	debugLogging           = false
-	destroyWait            = 30 * time.Millisecond
+	destroyWait            = 0 * time.Millisecond
 	createWait             = 80 * time.Millisecond
-	enableReloadProbe      = true
+	enableReloadProbe      = false
 	reloadProbeCycles      = 10
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
