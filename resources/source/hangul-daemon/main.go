@@ -37,6 +37,17 @@ const (
 	keyRepeat  = 2
 
 	// Keycodes
+	KEY_1          = 2
+	KEY_2          = 3
+	KEY_3          = 4
+	KEY_4          = 5
+	KEY_5          = 6
+	KEY_6          = 7
+	KEY_7          = 8
+	KEY_8          = 9
+	KEY_9          = 10
+	KEY_0          = 11
+	KEY_EQUAL      = 13
 	KEY_BACKSPACE  = 14
 	KEY_Q          = 16
 	KEY_W          = 17
@@ -48,6 +59,8 @@ const (
 	KEY_I          = 23
 	KEY_O          = 24
 	KEY_P          = 25
+	KEY_LEFTBRACE  = 26
+	KEY_RIGHTBRACE = 27
 	KEY_ENTER      = 28
 	KEY_LEFTCTRL   = 29
 	KEY_A          = 30
@@ -59,7 +72,11 @@ const (
 	KEY_J          = 36
 	KEY_K          = 37
 	KEY_L          = 38
+	KEY_SEMICOLON  = 39
+	KEY_APOSTROPHE = 40
+	KEY_GRAVE      = 41
 	KEY_LEFTSHIFT  = 42
+	KEY_BACKSLASH  = 43
 	KEY_Z          = 44
 	KEY_X          = 45
 	KEY_C          = 46
@@ -67,6 +84,9 @@ const (
 	KEY_B          = 48
 	KEY_N          = 49
 	KEY_M          = 50
+	KEY_COMMA      = 51
+	KEY_DOT        = 52
+	KEY_SLASH      = 53
 	KEY_RIGHTSHIFT = 54
 	KEY_LEFTALT    = 56
 	KEY_SPACE      = 57
@@ -122,6 +142,31 @@ type jongSplit struct {
 	ok     bool
 }
 
+type mappedKey struct {
+	code    uint16
+	shifted bool
+}
+
+type keyPatchSpec struct {
+	code    uint16
+	unicode uint16
+	qtcode  uint32
+	mod     byte
+}
+
+type keyPatchInfo struct {
+	fileOffsets []int64
+	origUnicode uint16
+	origQtcode  uint32
+}
+
+type outputSlot struct {
+	spec     keyPatchSpec
+	char     rune
+	fixed    bool
+	lastUsed uint64
+}
+
 func makeKeyIndexTable(pairs ...keyIndexPair) [maxKeyCode + 1]int8 {
 	var table [maxKeyCode + 1]int8
 	for i := range table {
@@ -148,6 +193,7 @@ type KeymapPatcher struct {
 	diskPath    string  // libepaper.so 디스크 경로
 	origUnicode uint16
 	origQtcode  uint32
+	keyEntries  map[uint32]keyPatchInfo
 }
 
 func copyFile(src, dst string) error {
@@ -288,6 +334,238 @@ func (kp *KeymapPatcher) restoreDisk() {
 	} else {
 		log.Printf("[PATCHER] 디스크 원본 복원 완료")
 	}
+}
+
+func keyEntryKey(code uint16, mod byte) uint32 {
+	return uint32(code)<<8 | uint32(mod)
+}
+
+func mappedKeyFromSpec(spec keyPatchSpec) mappedKey {
+	return mappedKey{code: spec.code, shifted: spec.mod != 0}
+}
+
+func keyCodeName(code uint16) string {
+	switch code {
+	case KEY_1:
+		return "KEY_1"
+	case KEY_2:
+		return "KEY_2"
+	case KEY_3:
+		return "KEY_3"
+	case KEY_4:
+		return "KEY_4"
+	case KEY_5:
+		return "KEY_5"
+	case KEY_6:
+		return "KEY_6"
+	case KEY_7:
+		return "KEY_7"
+	case KEY_8:
+		return "KEY_8"
+	case KEY_9:
+		return "KEY_9"
+	case KEY_0:
+		return "KEY_0"
+	case KEY_EQUAL:
+		return "KEY_EQUAL"
+	case KEY_Q:
+		return "KEY_Q"
+	case KEY_W:
+		return "KEY_W"
+	case KEY_E:
+		return "KEY_E"
+	case KEY_R:
+		return "KEY_R"
+	case KEY_T:
+		return "KEY_T"
+	case KEY_Y:
+		return "KEY_Y"
+	case KEY_U:
+		return "KEY_U"
+	case KEY_I:
+		return "KEY_I"
+	case KEY_O:
+		return "KEY_O"
+	case KEY_P:
+		return "KEY_P"
+	case KEY_LEFTBRACE:
+		return "KEY_LEFTBRACE"
+	case KEY_RIGHTBRACE:
+		return "KEY_RIGHTBRACE"
+	case KEY_A:
+		return "KEY_A"
+	case KEY_S:
+		return "KEY_S"
+	case KEY_D:
+		return "KEY_D"
+	case KEY_F:
+		return "KEY_F"
+	case KEY_G:
+		return "KEY_G"
+	case KEY_H:
+		return "KEY_H"
+	case KEY_J:
+		return "KEY_J"
+	case KEY_K:
+		return "KEY_K"
+	case KEY_L:
+		return "KEY_L"
+	case KEY_SEMICOLON:
+		return "KEY_SEMICOLON"
+	case KEY_APOSTROPHE:
+		return "KEY_APOSTROPHE"
+	case KEY_GRAVE:
+		return "KEY_GRAVE"
+	case KEY_BACKSLASH:
+		return "KEY_BACKSLASH"
+	case KEY_Z:
+		return "KEY_Z"
+	case KEY_X:
+		return "KEY_X"
+	case KEY_C:
+		return "KEY_C"
+	case KEY_V:
+		return "KEY_V"
+	case KEY_B:
+		return "KEY_B"
+	case KEY_N:
+		return "KEY_N"
+	case KEY_M:
+		return "KEY_M"
+	case KEY_COMMA:
+		return "KEY_COMMA"
+	case KEY_DOT:
+		return "KEY_DOT"
+	case KEY_SLASH:
+		return "KEY_SLASH"
+	default:
+		return fmt.Sprintf("KEY_%d", code)
+	}
+}
+
+func digitPlainSpecs() []keyPatchSpec {
+	return nil
+}
+
+func digitShiftSpecs() []keyPatchSpec {
+	return nil
+}
+
+func alphaPlainSpecs() []keyPatchSpec {
+	return []keyPatchSpec{
+		{KEY_Q, 'q', 'Q', 0}, {KEY_W, 'w', 'W', 0}, {KEY_E, 'e', 'E', 0}, {KEY_R, 'r', 'R', 0},
+		{KEY_T, 't', 'T', 0}, {KEY_Y, 'y', 'Y', 0}, {KEY_U, 'u', 'U', 0}, {KEY_I, 'i', 'I', 0},
+		{KEY_O, 'o', 'O', 0}, {KEY_P, 'p', 'P', 0}, {KEY_A, 'a', 'A', 0}, {KEY_S, 's', 'S', 0},
+		{KEY_D, 'd', 'D', 0}, {KEY_F, 'f', 'F', 0}, {KEY_G, 'g', 'G', 0}, {KEY_H, 'h', 'H', 0},
+		{KEY_J, 'j', 'J', 0}, {KEY_K, 'k', 'K', 0}, {KEY_L, 'l', 'L', 0}, {KEY_Z, 'z', 'Z', 0},
+		{KEY_X, 'x', 'X', 0}, {KEY_C, 'c', 'C', 0}, {KEY_V, 'v', 'V', 0}, {KEY_B, 'b', 'B', 0},
+		{KEY_N, 'n', 'N', 0}, {KEY_M, 'm', 'M', 0},
+	}
+}
+
+func alphaShiftSpecs() []keyPatchSpec {
+	return []keyPatchSpec{
+		{KEY_Q, 'Q', 'Q', 1}, {KEY_W, 'W', 'W', 1}, {KEY_E, 'E', 'E', 1}, {KEY_R, 'R', 'R', 1},
+		{KEY_T, 'T', 'T', 1}, {KEY_Y, 'Y', 'Y', 1}, {KEY_U, 'U', 'U', 1}, {KEY_I, 'I', 'I', 1},
+		{KEY_O, 'O', 'O', 1}, {KEY_P, 'P', 'P', 1}, {KEY_A, 'A', 'A', 1}, {KEY_S, 'S', 'S', 1},
+		{KEY_D, 'D', 'D', 1}, {KEY_F, 'F', 'F', 1}, {KEY_G, 'G', 'G', 1}, {KEY_H, 'H', 'H', 1},
+		{KEY_J, 'J', 'J', 1}, {KEY_K, 'K', 'K', 1}, {KEY_L, 'L', 'L', 1}, {KEY_Z, 'Z', 'Z', 1},
+		{KEY_X, 'X', 'X', 1}, {KEY_C, 'C', 'C', 1}, {KEY_V, 'V', 'V', 1}, {KEY_B, 'B', 'B', 1},
+		{KEY_N, 'N', 'N', 1}, {KEY_M, 'M', 'M', 1},
+	}
+}
+
+func symbolPlainSpecs() []keyPatchSpec { return nil }
+
+func symbolShiftSpecs() []keyPatchSpec { return nil }
+
+func allOutputSlotSpecs() []keyPatchSpec {
+	specs := make([]keyPatchSpec, 0, 52)
+	specs = append(specs, alphaPlainSpecs()...)
+	specs = append(specs, alphaShiftSpecs()...)
+	return specs
+}
+
+func fixedOutputChars() []rune {
+	return []rune{
+		'`', '~', '^', '\\', '|',
+		'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
+		'가', '나', '다', '라', '마', '바', '사', '아', '자', '하',
+		'거', '너', '더', '러', '머', '서', '어', '저',
+	}
+}
+
+func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
+	if kp.keyEntries == nil {
+		kp.keyEntries = make(map[uint32]keyPatchInfo)
+	}
+	entryKey := keyEntryKey(spec.code, spec.mod)
+	if _, ok := kp.keyEntries[entryKey]; ok {
+		return nil
+	}
+
+	signature := make([]byte, 9)
+	binary.LittleEndian.PutUint16(signature[0:2], spec.code)
+	binary.LittleEndian.PutUint16(signature[2:4], spec.unicode)
+	binary.LittleEndian.PutUint32(signature[4:8], spec.qtcode)
+	signature[8] = spec.mod
+
+	offsets := searchFileForSignature(kp.diskPath, signature)
+	if len(offsets) == 0 {
+		return fmt.Errorf("key entry not found: code=%d unicode=U+%04X qt=0x%08x mod=%d", spec.code, spec.unicode, spec.qtcode, spec.mod)
+	}
+
+	kp.keyEntries[entryKey] = keyPatchInfo{
+		fileOffsets: offsets,
+		origUnicode: spec.unicode,
+		origQtcode:  spec.qtcode,
+	}
+	return nil
+}
+
+func (kp *KeymapPatcher) initOutputEntries() error {
+	for _, spec := range allOutputSlotSpecs() {
+		if err := kp.initKeyEntry(spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (kp *KeymapPatcher) writeKeyEntryToDisk(code uint16, mod byte, unicode uint16, qtcode uint32) error {
+	entry, ok := kp.keyEntries[keyEntryKey(code, mod)]
+	if !ok {
+		return fmt.Errorf("uninitialized key entry: %s shift=%t", keyCodeName(code), mod != 0)
+	}
+
+	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open %s for write: %w", kp.diskPath, err)
+	}
+	defer f.Close()
+
+	var uniBuf [2]byte
+	binary.LittleEndian.PutUint16(uniBuf[:], unicode)
+	var qtBuf [4]byte
+	binary.LittleEndian.PutUint32(qtBuf[:], qtcode)
+
+	for _, fOff := range entry.fileOffsets {
+		if _, err := f.WriteAt(uniBuf[:], fOff+2); err != nil {
+			return fmt.Errorf("write unicode at 0x%x: %w", fOff+2, err)
+		}
+		if _, err := f.WriteAt(qtBuf[:], fOff+4); err != nil {
+			return fmt.Errorf("write qtcode at 0x%x: %w", fOff+4, err)
+		}
+	}
+	return nil
+}
+
+func (kp *KeymapPatcher) restoreKeyEntry(code uint16, mod byte) error {
+	entry, ok := kp.keyEntries[keyEntryKey(code, mod)]
+	if !ok {
+		return fmt.Errorf("uninitialized key entry: %s shift=%t", keyCodeName(code), mod != 0)
+	}
+	return kp.writeKeyEntryToDisk(code, mod, entry.origUnicode, entry.origQtcode)
 }
 
 // 두벌식 자판 매핑
@@ -473,13 +751,19 @@ type Daemon struct {
 	ctrl_or_alt    bool
 	pendingVisible bool
 	visibleChar    rune
+	pendingMiss    bool
+	pendingMissChar rune
 	lastPreviewAt  time.Time
 	lastTypingAt   time.Time
 	lastKeyGap     time.Duration
 	hangul         HangulState
 	patcher        *KeymapPatcher
-	lastChar       rune // 현재 디스크에 패치된 문자 (0=원본)
 	idleFlushSeq   uint64
+	outputMap      map[rune]mappedKey
+	outputSpecs    []keyPatchSpec
+	outputSlots    []outputSlot
+	layoutActive   bool
+	lruUseTick     uint64
 }
 
 func ioctl(fd uintptr, request uintptr, arg uintptr) error {
@@ -536,14 +820,13 @@ func (d *Daemon) recreateUinput() error {
 	}
 
 	// xochitl 핸들러 정리 대기
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(0 * time.Millisecond)
 
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("recreate uinput: %w", err)
 	}
 
 	// xochitl이 새 디바이스를 감지하고 핸들러를 생성할 때까지 대기
-	// journal 로그 기준 ~44ms 소요
 	time.Sleep(80 * time.Millisecond)
 
 	return nil
@@ -575,72 +858,279 @@ func (d *Daemon) sendKeyTap(code uint16) {
 	d.sendKey(code, false)
 }
 
-func (d *Daemon) sendKeySequence(codes ...uint16) {
-	for _, code := range codes {
-		_ = d.writeEvent(EV_KEY, code, keyPress)
-		_ = d.writeEvent(EV_KEY, code, keyRelease)
+func (d *Daemon) sendMappedKeyTap(key mappedKey) {
+	if key.shifted {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
+	}
+	_ = d.writeEvent(EV_KEY, key.code, keyPress)
+	_ = d.writeEvent(EV_KEY, key.code, keyRelease)
+	if key.shifted {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+	}
+	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+}
+
+func (d *Daemon) sendMappedReplace(key mappedKey) {
+	_ = d.writeEvent(EV_KEY, KEY_BACKSPACE, keyPress)
+	_ = d.writeEvent(EV_KEY, KEY_BACKSPACE, keyRelease)
+	if key.shifted {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
+	}
+	_ = d.writeEvent(EV_KEY, key.code, keyPress)
+	_ = d.writeEvent(EV_KEY, key.code, keyRelease)
+	if key.shifted {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
 	}
 	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
 }
 
 func (d *Daemon) sendBackspace() {
 	d.sendKeyTap(KEY_BACKSPACE)
-	time.Sleep(1 * time.Millisecond)
 }
 
 func (d *Daemon) passthrough(ev InputEvent) {
 	_ = d.writeEvent(ev.Type, ev.Code, ev.Value)
 }
 
-// outputChar: 한글 문자를 xochitl에 전달
-// 1. 디스크 패치 (문자 변경 시)
-// 2. uinput 디바이스 재생성 (xochitl이 패치된 키맵으로 새 핸들러 생성)
-// 3. 백스페이스 전송 (필요 시)
-// 4. KEY_Q 전송 → xochitl이 패치된 문자로 표시
+func specialPassthroughRune(code uint16, shifted bool) (rune, bool) {
+	if code == KEY_6 && shifted {
+		return '^', true
+	}
+	return 0, false
+}
+
+func (d *Daemon) passthroughWithShift(ev InputEvent) {
+	if !d.shifted || ev.Type != EV_KEY || ev.Value == keyRepeat {
+		d.passthrough(ev)
+		return
+	}
+
+	// In Korean mode, shifted symbol passthrough must not leave Shift logically
+	// pressed across subsequent Hangul key presses. Emit a complete chord on
+	// keyPress and swallow the matching keyRelease.
+	if d.korean {
+		if ev.Value == keyPress {
+			_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
+			_ = d.writeEvent(EV_KEY, ev.Code, keyPress)
+			_ = d.writeEvent(EV_KEY, ev.Code, keyRelease)
+			_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+			_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+			return
+		}
+		if ev.Value == keyRelease {
+			return
+		}
+	}
+
+	if ev.Value == keyPress {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
+		_ = d.writeEvent(EV_KEY, ev.Code, keyPress)
+		_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+		return
+	}
+
+	if ev.Value == keyRelease {
+		_ = d.writeEvent(EV_KEY, ev.Code, keyRelease)
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+		_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+		return
+	}
+
+	d.passthrough(ev)
+}
+
+func (d *Daemon) initOutputLayout() error {
+	specs := d.outputSpecs
+	fixedChars := fixedOutputChars()
+	if len(fixedChars) > len(specs) {
+		return fmt.Errorf("fixed output chars exceed slot count: %d > %d", len(fixedChars), len(specs))
+	}
+
+	d.outputMap = make(map[rune]mappedKey, len(specs))
+	d.outputSlots = make([]outputSlot, len(specs))
+	for i, spec := range specs {
+		slot := outputSlot{spec: spec}
+		if i < len(fixedChars) {
+			slot.char = fixedChars[i]
+			slot.fixed = true
+			d.outputMap[slot.char] = mappedKeyFromSpec(spec)
+		}
+		d.outputSlots[i] = slot
+	}
+	return nil
+}
+
+func (d *Daemon) initOutputSpecs() error {
+	candidates := allOutputSlotSpecs()
+	d.outputSpecs = make([]keyPatchSpec, 0, len(candidates))
+	for _, spec := range candidates {
+		if err := d.patcher.initKeyEntry(spec); err != nil {
+			log.Printf("[OUTPUT] unsupported slot skipped: %s shift=%t unicode=U+%04X (%v)", keyCodeName(spec.code), spec.mod != 0, spec.unicode, err)
+			continue
+		}
+		d.outputSpecs = append(d.outputSpecs, spec)
+	}
+	if len(d.outputSpecs) == 0 {
+		return fmt.Errorf("no supported output slot specs found")
+	}
+	return nil
+}
+
+func (d *Daemon) applyOutputLayoutToDisk() error {
+	for _, slot := range d.outputSlots {
+		if slot.char != 0 {
+			if err := d.patcher.writeKeyEntryToDisk(slot.spec.code, slot.spec.mod, uint16(slot.char), uint32(slot.char)); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Daemon) activateOutputLayout() error {
+	if d.layoutActive {
+		return nil
+	}
+	if err := d.applyOutputLayoutToDisk(); err != nil {
+		return fmt.Errorf("apply output layout: %w", err)
+	}
+	if err := d.recreateUinput(); err != nil {
+		return fmt.Errorf("activate output layout: %w", err)
+	}
+	d.layoutActive = true
+	return nil
+}
+
+func (d *Daemon) restoreOutputLayout() error {
+	if d.patcher == nil {
+		return nil
+	}
+	for _, slot := range d.outputSlots {
+		if err := d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod); err != nil {
+			return err
+		}
+	}
+	if d.uinputFd != nil {
+		if err := d.recreateUinput(); err != nil {
+			return err
+		}
+	}
+	d.layoutActive = false
+	return nil
+}
+
+func (d *Daemon) lookupOutputChar(char rune) (mappedKey, bool) {
+	key, ok := d.outputMap[char]
+	if ok {
+		d.lruUseTick++
+		for i := range d.outputSlots {
+			if d.outputSlots[i].char == char {
+				d.outputSlots[i].lastUsed = d.lruUseTick
+				break
+			}
+		}
+	}
+	return key, ok
+}
+
+func (d *Daemon) assignLRUSlot(char rune) (mappedKey, error) {
+	if key, ok := d.lookupOutputChar(char); ok {
+		return key, nil
+	}
+
+	slotIndex := -1
+	for i := range d.outputSlots {
+		if d.outputSlots[i].fixed {
+			continue
+		}
+		if d.outputSlots[i].char == 0 {
+			slotIndex = i
+			break
+		}
+	}
+	if slotIndex < 0 {
+		var minUsed uint64 = ^uint64(0)
+		for i := range d.outputSlots {
+			slot := d.outputSlots[i]
+			if slot.fixed {
+				continue
+			}
+			if slot.lastUsed < minUsed {
+				minUsed = slot.lastUsed
+				slotIndex = i
+			}
+		}
+	}
+	if slotIndex < 0 {
+		return mappedKey{}, fmt.Errorf("no output slot available for %q", char)
+	}
+
+	slot := &d.outputSlots[slotIndex]
+	if slot.char != 0 {
+		delete(d.outputMap, slot.char)
+	}
+	slot.char = char
+	d.lruUseTick++
+	slot.lastUsed = d.lruUseTick
+	key := mappedKeyFromSpec(slot.spec)
+	d.outputMap[char] = key
+
+	if d.layoutActive {
+		if err := d.patcher.writeKeyEntryToDisk(slot.spec.code, slot.spec.mod, uint16(char), uint32(char)); err != nil {
+			return mappedKey{}, err
+		}
+		if err := d.recreateUinput(); err != nil {
+			return mappedKey{}, err
+		}
+	}
+
+	return key, nil
+}
+
+// outputChar: 단일 출력 디바이스의 고정 슬롯/LRU 슬롯을 사용해 한글 문자를 전달
 func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 	if d.patcher == nil {
 		log.Printf("[OUTPUT] 패처 미초기화")
 		return
 	}
+	if err := d.activateOutputLayout(); err != nil {
+		log.Printf("[OUTPUT] 레이아웃 활성화 오류: %v", err)
+		return
+	}
 
-	if char != d.lastChar {
-		if err := d.patcher.writeToDisk(uint16(char), uint32(char)); err != nil {
-			log.Printf("[OUTPUT] 디스크 쓰기 오류: %v", err)
+	key, ok := d.lookupOutputChar(char)
+	if !ok {
+		var err error
+		key, err = d.assignLRUSlot(char)
+		if err != nil {
+			log.Printf("[OUTPUT] 슬롯 할당 오류: %v", err)
 			return
 		}
-		if err := d.recreateUinput(); err != nil {
-			log.Printf("[OUTPUT] 디바이스 재생성 오류: %v", err)
-			return
-		}
-		d.lastChar = char
-		debugf("[OUTPUT] U+%04X (%c) 로드 완료 (디바이스 재생성)", char, char)
 	}
 
 	if batchReplace && backspaces == 1 {
-		d.sendKeySequence(KEY_BACKSPACE, KEY_Q)
+		d.sendMappedReplace(key)
 		return
 	}
 
 	for i := 0; i < backspaces; i++ {
 		d.sendKeyTap(KEY_BACKSPACE)
 	}
-	if backspaces > 0 {
-		time.Sleep(2 * time.Millisecond)
-	}
 
-	d.sendKeyTap(KEY_Q)
+	d.sendMappedKeyTap(key)
 }
 
-// restoreKeymap: 영문 모드 전환 시 원본 키맵 복원
+// restoreKeymap: 영문 모드/단축키 모드 전환 시 원본 키맵 복원
 func (d *Daemon) restoreKeymap() {
-	if d.lastChar != 0 && d.patcher != nil {
-		d.patcher.restoreDisk()
-		if err := d.recreateUinput(); err != nil {
-			log.Printf("[RESTORE] 디바이스 재생성 오류: %v", err)
-		}
-		d.lastChar = 0
-		log.Printf("[RESTORE] 원본 키맵 복원 완료")
+	if err := d.restoreOutputLayout(); err != nil {
+		log.Printf("[RESTORE] 원본 키맵 복원 오류: %v", err)
+		return
 	}
+	log.Printf("[RESTORE] 원본 키맵 복원 완료")
 }
 
 func (d *Daemon) cancelIdleFlush() {
@@ -697,6 +1187,10 @@ func (d *Daemon) showPending() {
 	if !ok {
 		return
 	}
+	if d.pendingMiss && d.pendingMissChar == char {
+		d.flushMissChar(char)
+		return
+	}
 	if d.pendingVisible && d.visibleChar == char {
 		return
 	}
@@ -708,24 +1202,15 @@ func (d *Daemon) maybePreviewCurrent() {
 	if !ok {
 		return
 	}
-	previewInterval := d.currentPreviewInterval()
-	if !d.pendingVisible {
-		if d.lastPreviewAt.IsZero() || time.Since(d.lastPreviewAt) >= previewInterval {
-			d.commitPendingChar(char)
-		} else {
-			d.scheduleIdleFlush()
-		}
-		return
-	}
-	if d.visibleChar == char {
-		d.scheduleIdleFlush()
-		return
-	}
-	if time.Since(d.lastPreviewAt) >= previewInterval {
+	if _, hit := d.outputMap[char]; hit {
+		d.pendingMiss = false
+		d.pendingMissChar = 0
 		d.commitPendingChar(char)
-	} else {
-		d.scheduleIdleFlush()
+		return
 	}
+	d.pendingMiss = true
+	d.pendingMissChar = char
+	d.scheduleIdleFlush()
 }
 
 func (d *Daemon) scheduleIdleFlush() {
@@ -756,6 +1241,8 @@ func (d *Daemon) resetCompose() {
 	d.hangul = HangulState{}
 	d.pendingVisible = false
 	d.visibleChar = 0
+	d.pendingMiss = false
+	d.pendingMissChar = 0
 }
 
 func (d *Daemon) commitPendingChar(char rune) {
@@ -766,7 +1253,15 @@ func (d *Daemon) commitPendingChar(char rune) {
 	d.outputChar(char, backspaces, true)
 	d.pendingVisible = true
 	d.visibleChar = char
+	d.pendingMiss = false
+	d.pendingMissChar = 0
 	d.lastPreviewAt = time.Now()
+}
+
+func (d *Daemon) flushMissChar(char rune) {
+	d.pendingMiss = false
+	d.pendingMissChar = 0
+	d.commitPendingChar(char)
 }
 
 func (d *Daemon) renderBackspaceStep(char rune) {
@@ -783,7 +1278,11 @@ func (d *Daemon) renderBackspaceStep(char rune) {
 func (d *Daemon) commitCurrent() {
 	if char, ok := d.currentPendingChar(); ok {
 		if !d.pendingVisible || d.visibleChar != char {
-			d.commitPendingChar(char)
+			if d.pendingMiss && d.pendingMissChar == char {
+				d.flushMissChar(char)
+			} else {
+				d.commitPendingChar(char)
+			}
 		}
 	}
 	d.resetCompose()
@@ -974,7 +1473,9 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	// Shift 상태 체크
 	if ev.Code == KEY_LEFTSHIFT || ev.Code == KEY_RIGHTSHIFT {
 		d.shifted = (ev.Value != keyRelease)
-		d.passthrough(ev)
+		if !d.korean || d.ctrl_or_alt {
+			d.passthrough(ev)
+		}
 		return
 	}
 	// Ctrl Alt 상태 체크
@@ -1022,9 +1523,15 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 			d.handleKoreanKey(ev.Code, true)
 			return
 		}
+		if char, ok := specialPassthroughRune(ev.Code, d.shifted); ok {
+			d.commitCurrent()
+			d.outputChar(char, 0, false)
+			d.resetCompose()
+			return
+		}
 		if ev.Code == KEY_SPACE || ev.Code == KEY_ENTER || ev.Code == KEY_TAB {
 			d.commitCurrent()
-			d.passthrough(ev)
+			d.passthroughWithShift(ev)
 			return
 		}
 		if ev.Code == KEY_BACKSPACE {
@@ -1032,19 +1539,24 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 				d.handleBackspace()
 				return
 			}
-			d.passthrough(ev)
+			d.passthroughWithShift(ev)
 			return
 		}
 		d.commitCurrent()
-		d.passthrough(ev)
+		d.passthroughWithShift(ev)
 		return
 	}
 
 	if ev.Value == keyRelease && isAlphaKey(ev.Code) {
 		return
 	}
+	if ev.Value == keyRelease {
+		if _, ok := specialPassthroughRune(ev.Code, d.shifted); ok {
+			return
+		}
+	}
 
-	d.passthrough(ev)
+	d.passthroughWithShift(ev)
 }
 
 func findBTKeyboard() (string, error) {
@@ -1171,6 +1683,12 @@ func (d *Daemon) run(devicePath string) error {
 	if err := d.patcher.init(); err != nil {
 		return fmt.Errorf("patcher init: %w", err)
 	}
+	if err := d.initOutputSpecs(); err != nil {
+		return fmt.Errorf("output entry init: %w", err)
+	}
+	if err := d.initOutputLayout(); err != nil {
+		return fmt.Errorf("output layout init: %w", err)
+	}
 
 	// xochitl 실행 확인
 	if pid, err := findXochitlPID(); err != nil {
@@ -1182,6 +1700,9 @@ func (d *Daemon) run(devicePath string) error {
 	// 초기 uinput 디바이스 생성
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("setup uinput: %w", err)
+	}
+	if err := d.activateOutputLayout(); err != nil {
+		return fmt.Errorf("activate output layout: %w", err)
 	}
 
 	d.korean = true
@@ -1243,12 +1764,15 @@ func (d *Daemon) cleanup() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.closeInput()
+	if d.patcher != nil {
+		for _, slot := range d.outputSlots {
+			_ = d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod)
+		}
+		d.patcher.restoreDisk()
+	}
 	if d.uinputFd != nil {
 		_ = ioctl(d.uinputFd.Fd(), UI_DEV_DESTROY, 0)
 		d.uinputFd.Close()
-	}
-	if d.patcher != nil {
-		d.patcher.restoreDisk()
 	}
 }
 
