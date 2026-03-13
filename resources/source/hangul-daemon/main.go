@@ -792,27 +792,43 @@ func (d *Daemon) sendKeySequence(codes ...uint16) {
 }
 
 func (d *Daemon) sendMappedKeyTap(key mappedKey) {
-	if key.shifted {
+	needShiftDown := key.shifted && !d.shifted
+	needShiftUp := !key.shifted && d.shifted
+	if needShiftUp {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+	}
+	if needShiftDown {
 		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
 	}
 	_ = d.writeEvent(EV_KEY, key.code, keyPress)
 	_ = d.writeEvent(EV_KEY, key.code, keyRelease)
-	if key.shifted {
+	if needShiftDown {
 		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+	}
+	if needShiftUp {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
 	}
 	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
 }
 
 func (d *Daemon) sendMappedReplace(key mappedKey) {
+	needShiftDown := key.shifted && !d.shifted
+	needShiftUp := !key.shifted && d.shifted
+	if needShiftUp {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+	}
 	_ = d.writeEvent(EV_KEY, KEY_BACKSPACE, keyPress)
 	_ = d.writeEvent(EV_KEY, KEY_BACKSPACE, keyRelease)
-	if key.shifted {
+	if needShiftDown {
 		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
 	}
 	_ = d.writeEvent(EV_KEY, key.code, keyPress)
 	_ = d.writeEvent(EV_KEY, key.code, keyRelease)
-	if key.shifted {
+	if needShiftDown {
 		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+	}
+	if needShiftUp {
+		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
 	}
 	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
 }
