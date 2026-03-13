@@ -1358,7 +1358,9 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	// Shift 상태 체크
 	if ev.Code == KEY_LEFTSHIFT || ev.Code == KEY_RIGHTSHIFT {
 		d.shifted = (ev.Value != keyRelease)
-		d.passthrough(ev)
+		if !d.korean || d.ctrl_or_alt {
+			d.passthrough(ev)
+		}
 		return
 	}
 	// Ctrl Alt 상태 체크
