@@ -103,7 +103,7 @@ const (
 	destroyWait            = 30 * time.Millisecond
 	createWait             = 80 * time.Millisecond
 	enableReloadProbe      = true
-	reloadProbeRepeats     = 10
+	reloadProbeCycles      = 10
 	minPreviewInterval     = 35 * time.Millisecond
 	maxPreviewInterval     = 120 * time.Millisecond
 	minIdleFlushDelay      = 100 * time.Millisecond
@@ -795,19 +795,19 @@ func reloadProbeCases() []reloadProbeCase {
 
 func (d *Daemon) runReloadTimingProbe() error {
 	log.Printf("[RPROBE] reload timing probe start")
-	for _, tc := range reloadProbeCases() {
-		log.Printf("[RPROBE] case=%s destroy=%s create=%s expect=%c", tc.label, tc.destroyWait, tc.createWait, tc.char)
-		for i := 1; i <= reloadProbeRepeats; i++ {
-			log.Printf("[RPROBE] case=%s repeat=%d/%d", tc.label, i, reloadProbeRepeats)
+	for cycle := 1; cycle <= reloadProbeCycles; cycle++ {
+		log.Printf("[RPROBE] cycle=%d/%d start", cycle, reloadProbeCycles)
+		for _, tc := range reloadProbeCases() {
+			log.Printf("[RPROBE] case=%s destroy=%s create=%s expect=%c cycle=%d/%d", tc.label, tc.destroyWait, tc.createWait, tc.char, cycle, reloadProbeCycles)
 			if err := d.patcher.writeToDisk(uint16(tc.char), uint32(tc.char)); err != nil {
-				return fmt.Errorf("reload probe write %s repeat %d: %w", tc.label, i, err)
+				return fmt.Errorf("reload probe write %s cycle %d: %w", tc.label, cycle, err)
 			}
 			if err := d.recreateUinputWithWaits(tc.destroyWait, tc.createWait); err != nil {
-				return fmt.Errorf("reload probe recreate %s repeat %d: %w", tc.label, i, err)
+				return fmt.Errorf("reload probe recreate %s cycle %d: %w", tc.label, cycle, err)
 			}
 			d.sendKeyTap(KEY_Q)
 			d.sendKeyTap(KEY_SPACE)
-			d.sendProbeText(fmt.Sprintf("%d/%d %d ", tc.destroyWait/time.Millisecond, tc.createWait/time.Millisecond, i))
+			d.sendProbeText(fmt.Sprintf("%d/%d %d ", tc.destroyWait/time.Millisecond, tc.createWait/time.Millisecond, cycle))
 			time.Sleep(1200 * time.Millisecond)
 		}
 		time.Sleep(2 * time.Second)
