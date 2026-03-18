@@ -76,7 +76,7 @@ const defaultState: SetupState = {
   password: "",
   connected: false,
   eulaAgreed: false,
-  installKeypad: true,
+  installKeypad: false,
   installBtKeyboard: true,
   selectedLocales: [],
   localesConfigured: false,

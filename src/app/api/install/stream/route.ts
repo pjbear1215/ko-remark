@@ -131,6 +131,16 @@ function runSshOnce(ip: string, password: string, command: string): Promise<stri
   });
 }
 
+function isTransientSshError(message: string): boolean {
+  return (
+    message.includes("Exit code 255") ||
+    message.includes("Connection") ||
+    message.includes("kex_exchange") ||
+    message.includes("broken pipe") ||
+    message.includes("reset by peer")
+  );
+}
+
 async function runSsh(ip: string, password: string, command: string, retries = 3): Promise<string> {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
@@ -140,7 +150,7 @@ async function runSsh(ip: string, password: string, command: string, retries = 3
       return await runSshOnce(ip, password, command);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (attempt < retries - 1 && msg.includes("Permission denied")) {
+      if (attempt < retries - 1 && (msg.includes("Permission denied") || isTransientSshError(msg))) {
         continue;
       }
       throw err;
@@ -562,7 +572,9 @@ HOOK_DROPIN_DIR="${XOCHITL_DROPIN_DIR}"
 HOOK_DROPIN="${XOCHITL_HOOK_DROPIN}"
 SERVICE_SRC="$BASEDIR/hangul-daemon.service"
 LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
+LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"
 LIBEPAPER_BACKUP="$BASEDIR/backup/libepaper.so.original"
+LEGACY_LIBEPAPER_BACKUP="$BASEDIR/libepaper.so.original"
 LIBEPAPER_NEW_BACKUP="$BASEDIR/backup/libepaper.so.latest"
 XOCHITL="/usr/bin/xochitl"
 XOCHITL_ORIGINAL="$BASEDIR/backup/xochitl.original"
@@ -577,6 +589,65 @@ INSTALL_BT=0
 if [ -f "$STATE_FILE" ]; then
     . "$STATE_FILE"
 fi
+
+if [ ! -f "$LIBEPAPER_BACKUP" ] && [ -f "$LEGACY_LIBEPAPER_BACKUP" ]; then
+    mkdir -p "$(dirname "$LIBEPAPER_BACKUP")"
+    cp "$LEGACY_LIBEPAPER_BACKUP" "$LIBEPAPER_BACKUP"
+fi
+
+resolve_libepaper_mount_target() {
+    if grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; then
+        printf '%s\n' "$LIBEPAPER"
+        return 0
+    fi
+    if grep -q ' /usr/lib/plugins/platforms ' /proc/mounts 2>/dev/null; then
+        printf '%s\n' "/usr/lib/plugins/platforms"
+        return 0
+    fi
+    return 1
+}
+
+unmount_libepaper_mounts() {
+    while mounted_target="$(resolve_libepaper_mount_target)"; do
+        if ! umount "$mounted_target" 2>/dev/null; then
+            echo "[RESTORE] failed to unmount existing libepaper mount: $mounted_target" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
+ensure_tmpfs_libepaper() {
+    if [ "$INSTALL_BT" != "1" ]; then
+        return 0
+    fi
+
+    src=""
+    if [ -f "$LIBEPAPER_BACKUP" ]; then
+        src="$LIBEPAPER_BACKUP"
+    elif [ -f "$LIBEPAPER" ]; then
+        src="$LIBEPAPER"
+    fi
+
+    if [ -z "$src" ]; then
+        return 0
+    fi
+
+    unmount_libepaper_mounts
+
+    rm -f "$LIBEPAPER_TMPFS"
+    cp "$src" "$LIBEPAPER_TMPFS"
+    if [ ! -f "$LIBEPAPER_TMPFS" ]; then
+        echo "[RESTORE] tmpfs source missing after copy: $LIBEPAPER_TMPFS" >&2
+        return 1
+    fi
+    if [ ! -f "$LIBEPAPER" ]; then
+        echo "[RESTORE] bind mount target missing: $LIBEPAPER" >&2
+        return 1
+    fi
+    mount -o bind "$LIBEPAPER_TMPFS" "$LIBEPAPER"
+    echo "[RESTORE] tmpfs-backed libepaper mounted"
+}
 
 XOCHITL_WAS_ACTIVE=0
 if [ "$INSTALL_KEYPAD" = "1" ] && systemctl is-active --quiet xochitl 2>/dev/null; then
@@ -596,12 +667,12 @@ if [ "$INSTALL_KEYPAD" = "1" ] && strings "$XOCHITL" 2>/dev/null | grep -q '/hom
             echo "[RESTORE] xochitl 원본 복원 완료 (시스템 백업)"
             # 키보드 설정 복원 ([General] 섹션 안에 삽입)
             XOCHITL_CONF="/home/root/.config/remarkable/xochitl.conf"
-            if [ -f "\$XOCHITL_CONF" ]; then
-                sed -i '/^Keyboard=/d' "\$XOCHITL_CONF"
-                if grep -q '^\\[General\\]' "\$XOCHITL_CONF"; then
-                    sed -i '/^\\[General\\]/a\\Keyboard=en_US' "\$XOCHITL_CONF"
+            if [ -f "$XOCHITL_CONF" ]; then
+                sed -i '/^Keyboard=/d' "$XOCHITL_CONF"
+                if grep -q '^\\[General\\]' "$XOCHITL_CONF"; then
+                    sed -i '/^\\[General\\]/a\\Keyboard=en_US' "$XOCHITL_CONF"
                 else
-                    echo "Keyboard=en_US" >> "\$XOCHITL_CONF"
+                    echo "Keyboard=en_US" >> "$XOCHITL_CONF"
                 fi
                 echo "[RESTORE] 키보드 설정 -> en_US"
             fi
@@ -668,6 +739,8 @@ if [ -f "$LIBEPAPER" ] && [ -f "$LIBEPAPER_BACKUP" ]; then
     fi
 fi
 
+ensure_tmpfs_libepaper
+
 # 폰트 복구
 if [ -f "$FONT_SRC" ] && [ ! -f "$FONT_DST" ]; then
     mkdir -p "$(dirname "$FONT_DST")"
@@ -682,10 +755,10 @@ fi
 # 키보드 레이아웃 복구 (동적 탐색)
 if [ "$INSTALL_KEYPAD" = "1" ] && [ -d "$KBDS_SRC" ]; then
     for locale_dir in "$KBDS_SRC"/*/; do
-        locale=\$(basename "\$locale_dir")
-        if [ -f "$KBDS_SRC/\$locale/keyboard_layout.json" ] && [ ! -f "$KBDS_DST/\$locale/keyboard_layout.json" ]; then
-            mkdir -p "$KBDS_DST/\$locale"
-            cp "$KBDS_SRC/\$locale/keyboard_layout.json" "$KBDS_DST/\$locale/keyboard_layout.json"
+        locale=$(basename "$locale_dir")
+        if [ -f "$KBDS_SRC/$locale/keyboard_layout.json" ] && [ ! -f "$KBDS_DST/$locale/keyboard_layout.json" ]; then
+            mkdir -p "$KBDS_DST/$locale"
+            cp "$KBDS_SRC/$locale/keyboard_layout.json" "$KBDS_DST/$locale/keyboard_layout.json"
             CHANGED=1
         fi
     done
@@ -705,12 +778,12 @@ fi
 
 # 키보드 설정: ko_KR 유지 ([General] 섹션 안에 삽입하여 중복 방지)
 XOCHITL_CONF="/home/root/.config/remarkable/xochitl.conf"
-if [ "$INSTALL_KEYPAD" = "1" ] && [ -d "$KBDS_DST" ] && [ -f "\$XOCHITL_CONF" ]; then
-    sed -i '/^Keyboard=/d' "\$XOCHITL_CONF"
-    if grep -q '^\\[General\\]' "\$XOCHITL_CONF"; then
-        sed -i '/^\\[General\\]/a\\Keyboard=ko_KR' "\$XOCHITL_CONF"
+if [ "$INSTALL_KEYPAD" = "1" ] && [ -d "$KBDS_DST" ] && [ -f "$XOCHITL_CONF" ]; then
+    sed -i '/^Keyboard=/d' "$XOCHITL_CONF"
+    if grep -q '^\\[General\\]' "$XOCHITL_CONF"; then
+        sed -i '/^\\[General\\]/a\\Keyboard=ko_KR' "$XOCHITL_CONF"
     else
-        echo "Keyboard=ko_KR" >> "\$XOCHITL_CONF"
+        echo "Keyboard=ko_KR" >> "$XOCHITL_CONF"
     fi
 fi
 
@@ -1042,8 +1115,32 @@ mount -o remount,rw / 2>/dev/null || true
 
 BASEDIR="/home/root/bt-keyboard"
 BACKUP_DIR="$BASEDIR/backup"
+LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
+LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"
 
 echo "=== 한글 입력 롤백 시작 ==="
+
+resolve_libepaper_mount_target() {
+    if grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; then
+        printf '%s\n' "$LIBEPAPER"
+        return 0
+    fi
+    if grep -q ' /usr/lib/plugins/platforms ' /proc/mounts 2>/dev/null; then
+        printf '%s\n' "/usr/lib/plugins/platforms"
+        return 0
+    fi
+    return 1
+}
+
+unmount_libepaper_mounts() {
+    while mounted_target="$(resolve_libepaper_mount_target)"; do
+        if ! umount "$mounted_target" 2>/dev/null; then
+            echo "  WARN: 기존 libepaper mount 해제 실패: $mounted_target"
+            return 1
+        fi
+    done
+    return 0
+}
 
 # 1. 서비스 중지
 echo "[1/10] 서비스 중지..."
@@ -1120,8 +1217,10 @@ systemctl restart swupdate 2>/dev/null || true
 
 # 6. libepaper.so 원본 복원
 echo "[6/10] libepaper.so 원본 복원..."
-if [ -f "$BACKUP_DIR/libepaper.so.original" ]; then
-    cp "$BACKUP_DIR/libepaper.so.original" /usr/lib/plugins/platforms/libepaper.so
+unmount_libepaper_mounts || true
+rm -f "$LIBEPAPER_TMPFS"
+if [ -f "/home/root/bt-keyboard/backup/libepaper.so.original" ]; then
+    cp "/home/root/bt-keyboard/backup/libepaper.so.original" /usr/lib/plugins/platforms/libepaper.so
     echo "  OK: 원본 복원됨"
 fi
 
@@ -1206,7 +1305,7 @@ echo "완전 삭제하려면: rm -rf /home/root/bt-keyboard"
 
 export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = request.nextUrl;
-  const installKeypad = searchParams.get("keypad") !== "false";
+  const installKeypad = searchParams.get("keypad") === "true";
   const installBt = searchParams.get("bt") !== "false";
   const localesParam = searchParams.get("locales") ?? "all";
   const session = getSshSessionFromRequest(request);
@@ -1308,6 +1407,8 @@ export async function GET(request: NextRequest): Promise<Response> {
 
         const backupCommands = `
           BACKUP_DIR="/home/root/bt-keyboard/backup"
+          LIBEPAPER_BACKUP="$BACKUP_DIR/libepaper.so.original"
+          LEGACY_LIBEPAPER_BACKUP="/home/root/bt-keyboard/libepaper.so.original"
           if [ -f "/usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf" ] && [ ! -f "$BACKUP_DIR/font_existed" ]; then
             touch "$BACKUP_DIR/font_existed"
           fi
@@ -1317,10 +1418,13 @@ export async function GET(request: NextRequest): Promise<Response> {
           if [ -f "${XOCHITL_HOOK_DROPIN}" ] && [ ! -f "$BACKUP_DIR/xochitl_override.conf.orig" ]; then
             cp "${XOCHITL_HOOK_DROPIN}" "$BACKUP_DIR/xochitl_override.conf.orig"
           fi
+          if [ ! -f "$LIBEPAPER_BACKUP" ] && [ -f "$LEGACY_LIBEPAPER_BACKUP" ]; then
+            cp "$LEGACY_LIBEPAPER_BACKUP" "$LIBEPAPER_BACKUP"
+          fi
           # libepaper.so 원본 백업 (최초 1회)
           LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
-          if [ -f "$LIBEPAPER" ] && [ ! -f "$BACKUP_DIR/libepaper.so.original" ]; then
-            cp "$LIBEPAPER" "$BACKUP_DIR/libepaper.so.original"
+          if [ -f "$LIBEPAPER" ] && [ ! -f "$LIBEPAPER_BACKUP" ]; then
+            cp "$LIBEPAPER" "$LIBEPAPER_BACKUP"
           fi
           echo "backup complete"
         `;
@@ -1453,10 +1557,24 @@ export async function GET(request: NextRequest): Promise<Response> {
           send("step", { step: 5, name: "부팅 시 자동 복구 서비스 설치", status: "running" });
           send("progress", { percent: 85, step: 5 });
 
-          await runSsh(
+          const restoreDir = path.join(os.tmpdir(), "ko-remark-install");
+          const restoreScriptPath = path.join(restoreDir, "restore.sh");
+          const restoreServicePath = path.join(restoreDir, "hangul-restore.service");
+          fs.mkdirSync(restoreDir, { recursive: true });
+          fs.writeFileSync(restoreScriptPath, RESTORE_SCRIPT);
+          fs.writeFileSync(restoreServicePath, RESTORE_SERVICE);
+
+          await runScp(
             ip,
             password,
-            `cat > /home/root/bt-keyboard/restore.sh << 'RESTORE_EOF'\n${RESTORE_SCRIPT}RESTORE_EOF`,
+            restoreScriptPath,
+            "/home/root/bt-keyboard/restore.sh",
+          );
+          await runScp(
+            ip,
+            password,
+            restoreServicePath,
+            "/home/root/bt-keyboard/hangul-restore.service",
           );
           await runSsh(ip, password, "chmod +x /home/root/bt-keyboard/restore.sh");
           send("log", { line: "OK: restore.sh 생성" });
@@ -1464,47 +1582,20 @@ export async function GET(request: NextRequest): Promise<Response> {
           await runSsh(
             ip,
             password,
-            `cat > /etc/systemd/system/hangul-restore.service << 'SERVICE_EOF'\n${RESTORE_SERVICE}SERVICE_EOF`,
+            "cp /home/root/bt-keyboard/hangul-restore.service /etc/systemd/system/hangul-restore.service && systemctl daemon-reload && systemctl enable hangul-restore.service 2>/dev/null || true",
           );
           send("log", { line: "OK: hangul-restore.service 생성" });
-
-          await runSsh(ip, password, "systemctl daemon-reload");
-          await runSsh(
-            ip,
-            password,
-            "systemctl enable hangul-restore.service 2>/dev/null || true",
-          );
           send("log", { line: "OK: hangul-restore 서비스 활성화" });
 
-          // /etc는 overlayfs (tmpfs upperdir) → rootfs에 직접 기록하여 재부팅 후 보존
           await runSsh(
             ip,
             password,
-            `ROOTFS_DEV=$(mount | grep ' / ' | head -n1 | awk '{print $1}') && mkdir -p /mnt/rootfs && mount -o rw "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null && mkdir -p /mnt/rootfs/etc/systemd/system/multi-user.target.wants && cat > /mnt/rootfs/etc/systemd/system/hangul-restore.service << 'SERVICE_EOF'\n${RESTORE_SERVICE}SERVICE_EOF\nln -sf /etc/systemd/system/hangul-restore.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/hangul-restore.service && sync && umount /mnt/rootfs 2>/dev/null || true`,
+            `ROOTFS_DEV=$(mount | grep ' / ' | head -n1 | awk '{print $1}') && mkdir -p /mnt/rootfs && mount -o rw "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null && mkdir -p /mnt/rootfs/etc/systemd/system/multi-user.target.wants && cp /etc/systemd/system/hangul-restore.service /mnt/rootfs/etc/systemd/system/hangul-restore.service && ln -sf /etc/systemd/system/hangul-restore.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/hangul-restore.service && sync && umount /mnt/rootfs 2>/dev/null || true`,
           );
           send("log", { line: "OK: hangul-restore.service -> rootfs (reboot-safe)" });
 
           send("log", { line: "OK: install.sh가 post-update / factory-guard / swupdate 구성을 생성" });
-
           send("step", { step: 5, name: "부팅 시 자동 복구 서비스 설치 완료", status: "complete" });
-        }
-        // === 마지막: xochitl + hangul-daemon 재시작 (SSH 끊김 허용) ===
-        // install.sh에서 restart하면 후속 Step 5 SSH가 실패하므로 여기서 처리
-        try {
-          await runSsh(ip, password, `
-            sync
-            ${effectiveState.installKeypad ? "systemctl restart xochitl 2>/dev/null || true" : ""}
-            sleep 1
-            ${effectiveState.installBt
-              ? "systemctl restart hangul-daemon 2>/dev/null || true"
-              : "systemctl stop hangul-daemon 2>/dev/null || true; systemctl disable hangul-daemon 2>/dev/null || true"}
-          `);
-          send("log", {
-            line: `OK: runtime services synced (keypad=${effectiveState.installKeypad ? 1 : 0}, bt=${effectiveState.installBt ? 1 : 0})`,
-          });
-        } catch {
-          // xochitl 재시작 시 USB 네트워크 끊김 — 정상
-          send("log", { line: "OK: runtime service sync (연결 끊김 — 정상)" });
         }
 
         send("progress", { percent: 100, step: 5 });

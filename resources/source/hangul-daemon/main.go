@@ -194,6 +194,12 @@ type KeymapPatcher struct {
 	origUnicode uint16
 	origQtcode  uint32
 	keyEntries  map[uint32]keyPatchInfo
+	file        *os.File
+	mapped      []byte
+	mappedOffset int64
+	rangeReady  bool
+	rangeMinOff int64
+	rangeMaxEnd int64
 }
 
 func copyFile(src, dst string) error {
@@ -211,6 +217,144 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+func (kp *KeymapPatcher) close() {
+	if kp.mapped != nil {
+		_ = syscall.Munmap(kp.mapped)
+		kp.mapped = nil
+		kp.mappedOffset = 0
+	}
+	if kp.file != nil {
+		_ = kp.file.Close()
+		kp.file = nil
+	}
+}
+
+func (kp *KeymapPatcher) requiredMapRange() (int64, int64, error) {
+	if kp.rangeReady {
+		return kp.rangeMinOff, kp.rangeMaxEnd, nil
+	}
+	var minOff int64 = -1
+	var maxEnd int64
+	appendRange := func(offsets []int64) {
+		for _, off := range offsets {
+			if minOff == -1 || off < minOff {
+				minOff = off
+			}
+			if end := off + 8; end > maxEnd {
+				maxEnd = end
+			}
+		}
+	}
+	appendRange(kp.fileOffsets)
+	for _, entry := range kp.keyEntries {
+		appendRange(entry.fileOffsets)
+	}
+	if minOff < 0 || maxEnd <= minOff {
+		return 0, 0, fmt.Errorf("no keymap offsets available")
+	}
+	kp.rangeReady = true
+	kp.rangeMinOff = minOff
+	kp.rangeMaxEnd = maxEnd
+	return minOff, maxEnd, nil
+}
+
+func (kp *KeymapPatcher) openMappedFile() error {
+	minOff, maxEnd, err := kp.requiredMapRange()
+	if err != nil {
+		return err
+	}
+	pageSize := int64(os.Getpagesize())
+	mapStart := minOff & ^(pageSize - 1)
+	mapEnd := maxEnd
+	if rem := mapEnd % pageSize; rem != 0 {
+		mapEnd += pageSize - rem
+	}
+	mapLen := int(mapEnd - mapStart)
+	if kp.file != nil && kp.mapped != nil && kp.mappedOffset == mapStart && len(kp.mapped) == mapLen {
+		return nil
+	}
+	kp.close()
+
+	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", kp.diskPath, err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("stat %s: %w", kp.diskPath, err)
+	}
+	if fi.Size() == 0 {
+		f.Close()
+		return fmt.Errorf("%s is empty", kp.diskPath)
+	}
+	if mapEnd > fi.Size() {
+		f.Close()
+		return fmt.Errorf("keymap range out of bounds: start=0x%x end=0x%x size=0x%x", mapStart, mapEnd, fi.Size())
+	}
+	mapped, err := syscall.Mmap(int(f.Fd()), mapStart, mapLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("mmap %s [0x%x,0x%x): %w", kp.diskPath, mapStart, mapEnd, err)
+	}
+	kp.file = f
+	kp.mapped = mapped
+	kp.mappedOffset = mapStart
+	return nil
+}
+
+func (kp *KeymapPatcher) findSignatureOffsets(signature []byte) ([]int64, error) {
+	return searchFileForSignature(kp.diskPath, signature)
+}
+
+func searchFileForSignature(path string, signature []byte) ([]int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	fileSize := fi.Size()
+	if len(signature) == 0 || fileSize < int64(len(signature)) {
+		return nil, nil
+	}
+
+	var offsets []int64
+	buf := make([]byte, 4096)
+	sigLen := int64(len(signature))
+
+	for off := int64(0); off < fileSize; off += int64(len(buf)) - sigLen {
+		readSize := int64(len(buf))
+		if off+readSize > fileSize {
+			readSize = fileSize - off
+		}
+		n, readErr := f.ReadAt(buf[:readSize], off)
+		if readErr != nil && readErr != io.EOF {
+			return nil, readErr
+		}
+		if int64(n) < sigLen {
+			continue
+		}
+		for i := 0; i <= n-len(signature); i++ {
+			match := true
+			for j := 0; j < len(signature); j++ {
+				if buf[i+j] != signature[j] {
+					match = false
+					break
+				}
+			}
+			if match {
+				offsets = append(offsets, off+int64(i))
+			}
+		}
+	}
+	return offsets, nil
+}
+
 func (kp *KeymapPatcher) init() error {
 	kp.diskPath = "/usr/lib/plugins/platforms/libepaper.so"
 	backupPath := "/tmp/libepaper.so.original"
@@ -218,16 +362,27 @@ func (kp *KeymapPatcher) init() error {
 	// KEY_Q plain 엔트리 시그니처: keycode=0x10, unicode='q', qtcode=Qt::Key_Q, mod=0
 	signature := []byte{0x10, 0x00, 0x71, 0x00, 0x51, 0x00, 0x00, 0x00, 0x00}
 
-	kp.fileOffsets = searchFileForSignature(kp.diskPath, signature)
+	offsets, err := kp.findSignatureOffsets(signature)
+	if err != nil {
+		return fmt.Errorf("cannot scan %s: %w", kp.diskPath, err)
+	}
+	kp.fileOffsets = offsets
+	kp.rangeReady = false
 
 	if len(kp.fileOffsets) == 0 {
 		// 이전 세션에서 패치된 상태일 수 있음 → 백업에서 복원
 		if _, err := os.Stat(backupPath); err == nil {
 			log.Println("[PATCHER] 이전 패치 감지, 백업에서 복원 중...")
+			kp.close()
 			if err := copyFile(backupPath, kp.diskPath); err != nil {
 				return fmt.Errorf("backup restore failed: %w", err)
 			}
-			kp.fileOffsets = searchFileForSignature(kp.diskPath, signature)
+			offsets, err = kp.findSignatureOffsets(signature)
+			if err != nil {
+				return fmt.Errorf("cannot scan %s after restore: %w", kp.diskPath, err)
+			}
+			kp.fileOffsets = offsets
+			kp.rangeReady = false
 		}
 	}
 
@@ -253,64 +408,13 @@ func (kp *KeymapPatcher) init() error {
 		log.Printf("  [%d] fileOffset=0x%x", i, fOff)
 	}
 
-	// 쓰기 가능 여부 테스트
-	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("cannot write to %s (mount -o remount,rw / 필요?): %w", kp.diskPath, err)
-	}
-	f.Close()
-
 	return nil
 }
 
-func searchFileForSignature(path string, signature []byte) []int64 {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
-	fi, err := f.Stat()
-	if err != nil {
-		return nil
-	}
-	fileSize := fi.Size()
-
-	var offsets []int64
-	buf := make([]byte, 4096)
-	sigLen := int64(len(signature))
-
-	for off := int64(0); off < fileSize; off += int64(len(buf)) - sigLen {
-		readSize := int64(len(buf))
-		if off+readSize > fileSize {
-			readSize = fileSize - off
-		}
-		n, err := f.ReadAt(buf[:readSize], off)
-		if err != nil || int64(n) < sigLen {
-			continue
-		}
-		for i := 0; i <= n-len(signature); i++ {
-			match := true
-			for j := 0; j < len(signature); j++ {
-				if buf[i+j] != signature[j] {
-					match = false
-					break
-				}
-			}
-			if match {
-				offsets = append(offsets, off+int64(i))
-			}
-		}
-	}
-	return offsets
-}
-
 func (kp *KeymapPatcher) writeToDisk(unicode uint16, qtcode uint32) error {
-	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("open %s for write: %w", kp.diskPath, err)
+	if err := kp.openMappedFile(); err != nil {
+		return err
 	}
-	defer f.Close()
 
 	var uniBuf [2]byte
 	binary.LittleEndian.PutUint16(uniBuf[:], unicode)
@@ -318,12 +422,15 @@ func (kp *KeymapPatcher) writeToDisk(unicode uint16, qtcode uint32) error {
 	binary.LittleEndian.PutUint32(qtBuf[:], qtcode)
 
 	for _, fOff := range kp.fileOffsets {
-		if _, err := f.WriteAt(uniBuf[:], fOff+2); err != nil {
-			return fmt.Errorf("write unicode at 0x%x: %w", fOff+2, err)
+		uniOff := fOff + 2
+		qtOff := fOff + 4
+		localUniOff := uniOff - kp.mappedOffset
+		localQtOff := qtOff - kp.mappedOffset
+		if localUniOff < 0 || localQtOff+4 > int64(len(kp.mapped)) {
+			return fmt.Errorf("write range out of bounds at 0x%x", fOff)
 		}
-		if _, err := f.WriteAt(qtBuf[:], fOff+4); err != nil {
-			return fmt.Errorf("write qtcode at 0x%x: %w", fOff+4, err)
-		}
+		copy(kp.mapped[localUniOff:localUniOff+2], uniBuf[:])
+		copy(kp.mapped[localQtOff:localQtOff+4], qtBuf[:])
 	}
 	return nil
 }
@@ -487,12 +594,9 @@ func allOutputSlotSpecs() []keyPatchSpec {
 }
 
 func fixedOutputChars() []rune {
-	return []rune{
-		'`', '~', '^', '\\', '|',
-		'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
-		'가', '나', '다', '라', '마', '바', '사', '아', '자', '하',
-		'거', '너', '더', '러', '머', '서', '어', '저',
-	}
+	fixed := make([]rune, len(choseongToJamo))
+	copy(fixed, choseongToJamo)
+	return fixed
 }
 
 func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
@@ -510,7 +614,10 @@ func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
 	binary.LittleEndian.PutUint32(signature[4:8], spec.qtcode)
 	signature[8] = spec.mod
 
-	offsets := searchFileForSignature(kp.diskPath, signature)
+	offsets, err := kp.findSignatureOffsets(signature)
+	if err != nil {
+		return err
+	}
 	if len(offsets) == 0 {
 		return fmt.Errorf("key entry not found: code=%d unicode=U+%04X qt=0x%08x mod=%d", spec.code, spec.unicode, spec.qtcode, spec.mod)
 	}
@@ -520,15 +627,7 @@ func (kp *KeymapPatcher) initKeyEntry(spec keyPatchSpec) error {
 		origUnicode: spec.unicode,
 		origQtcode:  spec.qtcode,
 	}
-	return nil
-}
-
-func (kp *KeymapPatcher) initOutputEntries() error {
-	for _, spec := range allOutputSlotSpecs() {
-		if err := kp.initKeyEntry(spec); err != nil {
-			return err
-		}
-	}
+	kp.rangeReady = false
 	return nil
 }
 
@@ -537,12 +636,9 @@ func (kp *KeymapPatcher) writeKeyEntryToDisk(code uint16, mod byte, unicode uint
 	if !ok {
 		return fmt.Errorf("uninitialized key entry: %s shift=%t", keyCodeName(code), mod != 0)
 	}
-
-	f, err := os.OpenFile(kp.diskPath, os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("open %s for write: %w", kp.diskPath, err)
+	if err := kp.openMappedFile(); err != nil {
+		return err
 	}
-	defer f.Close()
 
 	var uniBuf [2]byte
 	binary.LittleEndian.PutUint16(uniBuf[:], unicode)
@@ -550,12 +646,15 @@ func (kp *KeymapPatcher) writeKeyEntryToDisk(code uint16, mod byte, unicode uint
 	binary.LittleEndian.PutUint32(qtBuf[:], qtcode)
 
 	for _, fOff := range entry.fileOffsets {
-		if _, err := f.WriteAt(uniBuf[:], fOff+2); err != nil {
-			return fmt.Errorf("write unicode at 0x%x: %w", fOff+2, err)
+		uniOff := fOff + 2
+		qtOff := fOff + 4
+		localUniOff := uniOff - kp.mappedOffset
+		localQtOff := qtOff - kp.mappedOffset
+		if localUniOff < 0 || localQtOff+4 > int64(len(kp.mapped)) {
+			return fmt.Errorf("write range out of bounds at 0x%x", fOff)
 		}
-		if _, err := f.WriteAt(qtBuf[:], fOff+4); err != nil {
-			return fmt.Errorf("write qtcode at 0x%x: %w", fOff+4, err)
-		}
+		copy(kp.mapped[localUniOff:localUniOff+2], uniBuf[:])
+		copy(kp.mapped[localQtOff:localQtOff+4], qtBuf[:])
 	}
 	return nil
 }
@@ -759,7 +858,9 @@ type Daemon struct {
 	hangul         HangulState
 	patcher        *KeymapPatcher
 	idleFlushSeq   uint64
+	idleFlushTimer *time.Timer
 	outputMap      map[rune]mappedKey
+	outputIndex    map[rune]int
 	outputSpecs    []keyPatchSpec
 	outputSlots    []outputSlot
 	layoutActive   bool
@@ -806,7 +907,6 @@ func (d *Daemon) setupUinput() error {
 		return fmt.Errorf("UI_DEV_CREATE: %w", err)
 	}
 
-	log.Println("[UINPUT] 디바이스 생성 완료")
 	return nil
 }
 
@@ -818,9 +918,6 @@ func (d *Daemon) recreateUinput() error {
 		d.uinputFd.Close()
 		d.uinputFd = nil
 	}
-
-	// xochitl 핸들러 정리 대기
-	time.Sleep(0 * time.Millisecond)
 
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("recreate uinput: %w", err)
@@ -844,48 +941,78 @@ func (d *Daemon) writeEvent(typ uint16, code uint16, value int32) error {
 	return err
 }
 
-func (d *Daemon) sendKey(code uint16, press bool) {
+func (d *Daemon) sendKey(code uint16, press bool) error {
 	val := int32(keyRelease)
 	if press {
 		val = keyPress
 	}
-	_ = d.writeEvent(EV_KEY, code, val)
-	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	if err := d.writeEvent(EV_KEY, code, val); err != nil {
+		return err
+	}
+	if err := d.writeEvent(EV_SYN, SYN_REPORT, 0); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (d *Daemon) sendKeyTap(code uint16) {
-	d.sendKey(code, true)
-	d.sendKey(code, false)
+func (d *Daemon) sendKeyTap(code uint16) error {
+	if err := d.writeEvent(EV_KEY, code, keyPress); err != nil {
+		return err
+	}
+	if err := d.writeEvent(EV_KEY, code, keyRelease); err != nil {
+		return err
+	}
+	return d.writeEvent(EV_SYN, SYN_REPORT, 0)
 }
 
-func (d *Daemon) sendMappedKeyTap(key mappedKey) {
+func (d *Daemon) sendMappedKeyTap(key mappedKey) error {
 	if key.shifted {
-		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
+		if err := d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress); err != nil {
+			return err
+		}
 	}
-	_ = d.writeEvent(EV_KEY, key.code, keyPress)
-	_ = d.writeEvent(EV_KEY, key.code, keyRelease)
+	if err := d.writeEvent(EV_KEY, key.code, keyPress); err != nil {
+		return err
+	}
+	if err := d.writeEvent(EV_KEY, key.code, keyRelease); err != nil {
+		return err
+	}
 	if key.shifted {
-		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+		if err := d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease); err != nil {
+			return err
+		}
 	}
-	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	return d.writeEvent(EV_SYN, SYN_REPORT, 0)
 }
 
-func (d *Daemon) sendMappedReplace(key mappedKey) {
-	_ = d.writeEvent(EV_KEY, KEY_BACKSPACE, keyPress)
-	_ = d.writeEvent(EV_KEY, KEY_BACKSPACE, keyRelease)
-	if key.shifted {
-		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
+func (d *Daemon) sendMappedReplace(key mappedKey) error {
+	if err := d.writeEvent(EV_KEY, KEY_BACKSPACE, keyPress); err != nil {
+		return err
 	}
-	_ = d.writeEvent(EV_KEY, key.code, keyPress)
-	_ = d.writeEvent(EV_KEY, key.code, keyRelease)
-	if key.shifted {
-		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
+	if err := d.writeEvent(EV_KEY, KEY_BACKSPACE, keyRelease); err != nil {
+		return err
 	}
-	_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	if key.shifted {
+		if err := d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress); err != nil {
+			return err
+		}
+	}
+	if err := d.writeEvent(EV_KEY, key.code, keyPress); err != nil {
+		return err
+	}
+	if err := d.writeEvent(EV_KEY, key.code, keyRelease); err != nil {
+		return err
+	}
+	if key.shifted {
+		if err := d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease); err != nil {
+			return err
+		}
+	}
+	return d.writeEvent(EV_SYN, SYN_REPORT, 0)
 }
 
-func (d *Daemon) sendBackspace() {
-	d.sendKeyTap(KEY_BACKSPACE)
+func (d *Daemon) sendBackspace() error {
+	return d.sendKeyTap(KEY_BACKSPACE)
 }
 
 func (d *Daemon) passthrough(ev InputEvent) {
@@ -947,6 +1074,7 @@ func (d *Daemon) initOutputLayout() error {
 	}
 
 	d.outputMap = make(map[rune]mappedKey, len(specs))
+	d.outputIndex = make(map[rune]int, len(specs))
 	d.outputSlots = make([]outputSlot, len(specs))
 	for i, spec := range specs {
 		slot := outputSlot{spec: spec}
@@ -954,6 +1082,7 @@ func (d *Daemon) initOutputLayout() error {
 			slot.char = fixedChars[i]
 			slot.fixed = true
 			d.outputMap[slot.char] = mappedKeyFromSpec(spec)
+			d.outputIndex[slot.char] = i
 		}
 		d.outputSlots[i] = slot
 	}
@@ -973,7 +1102,7 @@ func (d *Daemon) initOutputSpecs() error {
 	if len(d.outputSpecs) == 0 {
 		return fmt.Errorf("no supported output slot specs found")
 	}
-	return nil
+	return d.patcher.openMappedFile()
 }
 
 func (d *Daemon) applyOutputLayoutToDisk() error {
@@ -1023,25 +1152,42 @@ func (d *Daemon) restoreOutputLayout() error {
 	return nil
 }
 
+func (d *Daemon) reinitializeOutputLayoutForCurrentMode() error {
+	if d.patcher == nil {
+		return nil
+	}
+	for _, slot := range d.outputSlots {
+		if err := d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod); err != nil {
+			return fmt.Errorf("restore output layout: %w", err)
+		}
+	}
+	d.layoutActive = false
+	if d.korean {
+		if err := d.applyOutputLayoutToDisk(); err != nil {
+			return fmt.Errorf("reapply output layout: %w", err)
+		}
+		d.layoutActive = true
+	}
+	if d.uinputFd != nil {
+		if err := d.recreateUinput(); err != nil {
+			return fmt.Errorf("recreate uinput after layout reinit: %w", err)
+		}
+	}
+	return nil
+}
+
 func (d *Daemon) lookupOutputChar(char rune) (mappedKey, bool) {
 	key, ok := d.outputMap[char]
 	if ok {
 		d.lruUseTick++
-		for i := range d.outputSlots {
-			if d.outputSlots[i].char == char {
-				d.outputSlots[i].lastUsed = d.lruUseTick
-				break
-			}
+		if idx, ok := d.outputIndex[char]; ok && idx >= 0 && idx < len(d.outputSlots) {
+			d.outputSlots[idx].lastUsed = d.lruUseTick
 		}
 	}
 	return key, ok
 }
 
 func (d *Daemon) assignLRUSlot(char rune) (mappedKey, error) {
-	if key, ok := d.lookupOutputChar(char); ok {
-		return key, nil
-	}
-
 	slotIndex := -1
 	for i := range d.outputSlots {
 		if d.outputSlots[i].fixed {
@@ -1070,36 +1216,51 @@ func (d *Daemon) assignLRUSlot(char rune) (mappedKey, error) {
 	}
 
 	slot := &d.outputSlots[slotIndex]
-	if slot.char != 0 {
-		delete(d.outputMap, slot.char)
-	}
-	slot.char = char
-	d.lruUseTick++
-	slot.lastUsed = d.lruUseTick
+	prevChar := slot.char
+	newTick := d.lruUseTick + 1
 	key := mappedKeyFromSpec(slot.spec)
-	d.outputMap[char] = key
 
 	if d.layoutActive {
 		if err := d.patcher.writeKeyEntryToDisk(slot.spec.code, slot.spec.mod, uint16(char), uint32(char)); err != nil {
 			return mappedKey{}, err
 		}
 		if err := d.recreateUinput(); err != nil {
-			return mappedKey{}, err
+			var restoreErr error
+			if prevChar != 0 {
+				restoreErr = d.patcher.writeKeyEntryToDisk(slot.spec.code, slot.spec.mod, uint16(prevChar), uint32(prevChar))
+			} else {
+				restoreErr = d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod)
+			}
+			if restoreErr == nil {
+				_ = d.recreateUinput()
+			}
+			if restoreErr != nil {
+				return mappedKey{}, fmt.Errorf("recreate uinput after patching %q failed: %w (rollback failed: %v)", char, err, restoreErr)
+			}
+			return mappedKey{}, fmt.Errorf("recreate uinput after patching %q failed: %w", char, err)
 		}
 	}
+
+	if prevChar != 0 {
+		delete(d.outputMap, prevChar)
+		delete(d.outputIndex, prevChar)
+	}
+	slot.char = char
+	d.lruUseTick = newTick
+	slot.lastUsed = newTick
+	d.outputMap[char] = key
+	d.outputIndex[char] = slotIndex
 
 	return key, nil
 }
 
 // outputChar: 단일 출력 디바이스의 고정 슬롯/LRU 슬롯을 사용해 한글 문자를 전달
-func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
+func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) error {
 	if d.patcher == nil {
-		log.Printf("[OUTPUT] 패처 미초기화")
-		return
+		return fmt.Errorf("patcher not initialized")
 	}
 	if err := d.activateOutputLayout(); err != nil {
-		log.Printf("[OUTPUT] 레이아웃 활성화 오류: %v", err)
-		return
+		return fmt.Errorf("activate output layout: %w", err)
 	}
 
 	key, ok := d.lookupOutputChar(char)
@@ -1107,21 +1268,21 @@ func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) {
 		var err error
 		key, err = d.assignLRUSlot(char)
 		if err != nil {
-			log.Printf("[OUTPUT] 슬롯 할당 오류: %v", err)
-			return
+			return fmt.Errorf("assign output slot: %w", err)
 		}
 	}
 
 	if batchReplace && backspaces == 1 {
-		d.sendMappedReplace(key)
-		return
+		return d.sendMappedReplace(key)
 	}
 
 	for i := 0; i < backspaces; i++ {
-		d.sendKeyTap(KEY_BACKSPACE)
+		if err := d.sendKeyTap(KEY_BACKSPACE); err != nil {
+			return err
+		}
 	}
 
-	d.sendMappedKeyTap(key)
+	return d.sendMappedKeyTap(key)
 }
 
 // restoreKeymap: 영문 모드/단축키 모드 전환 시 원본 키맵 복원
@@ -1135,6 +1296,10 @@ func (d *Daemon) restoreKeymap() {
 
 func (d *Daemon) cancelIdleFlush() {
 	atomic.AddUint64(&d.idleFlushSeq, 1)
+	if d.idleFlushTimer != nil {
+		d.idleFlushTimer.Stop()
+		d.idleFlushTimer = nil
+	}
 }
 
 func adaptiveDelay(gap, minGap, maxGap, fastValue, slowValue time.Duration) time.Duration {
@@ -1182,19 +1347,18 @@ func (d *Daemon) currentPendingChar() (rune, bool) {
 	}
 }
 
-func (d *Daemon) showPending() {
+func (d *Daemon) showPending() error {
 	char, ok := d.currentPendingChar()
 	if !ok {
-		return
+		return nil
 	}
 	if d.pendingMiss && d.pendingMissChar == char {
-		d.flushMissChar(char)
-		return
+		return d.flushMissChar(char)
 	}
 	if d.pendingVisible && d.visibleChar == char {
-		return
+		return nil
 	}
-	d.commitPendingChar(char)
+	return d.commitPendingChar(char)
 }
 
 func (d *Daemon) maybePreviewCurrent() {
@@ -1203,9 +1367,9 @@ func (d *Daemon) maybePreviewCurrent() {
 		return
 	}
 	if _, hit := d.outputMap[char]; hit {
-		d.pendingMiss = false
-		d.pendingMissChar = 0
-		d.commitPendingChar(char)
+		if err := d.commitPendingChar(char); err != nil {
+			log.Printf("[OUTPUT] preview commit failed: %v", err)
+		}
 		return
 	}
 	d.pendingMiss = true
@@ -1219,21 +1383,25 @@ func (d *Daemon) scheduleIdleFlush() {
 	}
 	seq := atomic.AddUint64(&d.idleFlushSeq, 1)
 	delay := d.currentIdleFlushDelay()
-	go func(expected uint64, delay time.Duration) {
-		time.Sleep(delay)
-		if atomic.LoadUint64(&d.idleFlushSeq) != expected {
+	if d.idleFlushTimer != nil {
+		d.idleFlushTimer.Stop()
+	}
+	d.idleFlushTimer = time.AfterFunc(delay, func() {
+		if atomic.LoadUint64(&d.idleFlushSeq) != seq {
 			return
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		if atomic.LoadUint64(&d.idleFlushSeq) != expected {
+		if atomic.LoadUint64(&d.idleFlushSeq) != seq {
 			return
 		}
 		if d.hangul.state == stateEmpty {
 			return
 		}
-		d.showPending()
-	}(seq, delay)
+		if err := d.showPending(); err != nil {
+			log.Printf("[OUTPUT] idle flush failed: %v", err)
+		}
+	})
 }
 
 func (d *Daemon) resetCompose() {
@@ -1245,47 +1413,56 @@ func (d *Daemon) resetCompose() {
 	d.pendingMissChar = 0
 }
 
-func (d *Daemon) commitPendingChar(char rune) {
+func (d *Daemon) commitPendingChar(char rune) error {
 	backspaces := 0
 	if d.pendingVisible {
 		backspaces = 1
 	}
-	d.outputChar(char, backspaces, true)
+	if err := d.outputChar(char, backspaces, true); err != nil {
+		return err
+	}
 	d.pendingVisible = true
 	d.visibleChar = char
 	d.pendingMiss = false
 	d.pendingMissChar = 0
 	d.lastPreviewAt = time.Now()
+	return nil
 }
 
-func (d *Daemon) flushMissChar(char rune) {
-	d.pendingMiss = false
-	d.pendingMissChar = 0
-	d.commitPendingChar(char)
+func (d *Daemon) flushMissChar(char rune) error {
+	return d.commitPendingChar(char)
 }
 
-func (d *Daemon) renderBackspaceStep(char rune) {
+func (d *Daemon) renderBackspaceStep(char rune) error {
 	backspaces := 0
 	if d.pendingVisible {
 		backspaces = 1
 	}
-	d.outputChar(char, backspaces, false)
+	if err := d.outputChar(char, backspaces, false); err != nil {
+		return err
+	}
 	d.pendingVisible = true
 	d.visibleChar = char
 	d.lastPreviewAt = time.Now()
+	return nil
 }
 
-func (d *Daemon) commitCurrent() {
+func (d *Daemon) commitCurrent() error {
 	if char, ok := d.currentPendingChar(); ok {
 		if !d.pendingVisible || d.visibleChar != char {
 			if d.pendingMiss && d.pendingMissChar == char {
-				d.flushMissChar(char)
+				if err := d.flushMissChar(char); err != nil {
+					return err
+				}
 			} else {
-				d.commitPendingChar(char)
+				if err := d.commitPendingChar(char); err != nil {
+					return err
+				}
 			}
 		}
 	}
 	d.resetCompose()
+	return nil
 }
 
 func isAlphaKey(code uint16) bool {
@@ -1341,8 +1518,13 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 	}
 
 	if !isChoseong && !isJungseong {
-		d.commitCurrent()
-		d.sendKeyTap(keyCode)
+		if err := d.commitCurrent(); err != nil {
+			log.Printf("[OUTPUT] commit current failed: %v", err)
+			return
+		}
+		if err := d.sendKeyTap(keyCode); err != nil {
+			log.Printf("[OUTPUT] passthrough key tap failed: %v", err)
+		}
 		return
 	}
 
@@ -1354,7 +1536,10 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 			d.pendingVisible = false
 			d.maybePreviewCurrent()
 		} else if isJungseong {
-			d.outputChar(jungseongToJamo[jungIdx], 0, false)
+			if err := d.outputChar(jungseongToJamo[jungIdx], 0, false); err != nil {
+				log.Printf("[OUTPUT] direct jungseong output failed: %v", err)
+				return
+			}
 			d.resetCompose()
 		}
 
@@ -1364,7 +1549,10 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 			d.hangul.state = stateJungseong
 			d.maybePreviewCurrent()
 		} else if isChoseong {
-			d.renderBackspaceStep(choseongToJamo[d.hangul.cho])
+			if err := d.renderBackspaceStep(choseongToJamo[d.hangul.cho]); err != nil {
+				log.Printf("[OUTPUT] render backspace step failed: %v", err)
+				return
+			}
 			d.hangul.cho = choIdx
 			d.hangul.state = stateChoseong
 			d.pendingVisible = false
@@ -1382,12 +1570,21 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 				d.hangul.jung = compoundJung
 				d.maybePreviewCurrent()
 			} else {
-				d.commitCurrent()
-				d.outputChar(jungseongToJamo[jungIdx], 0, false)
+				if err := d.commitCurrent(); err != nil {
+					log.Printf("[OUTPUT] commit current failed: %v", err)
+					return
+				}
+				if err := d.outputChar(jungseongToJamo[jungIdx], 0, false); err != nil {
+					log.Printf("[OUTPUT] direct jungseong output failed: %v", err)
+					return
+				}
 				d.resetCompose()
 			}
 		} else if isChoseong {
-			d.commitCurrent()
+			if err := d.commitCurrent(); err != nil {
+				log.Printf("[OUTPUT] commit current failed: %v", err)
+				return
+			}
 			d.hangul.cho = choIdx
 			d.hangul.state = stateChoseong
 			d.pendingVisible = false
@@ -1399,7 +1596,10 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 			if split := splitCompoundJongseong(d.hangul.jong); split.ok {
 				newCho := int(jongseongToChoseong[split.second])
 				d.hangul.jong = int(split.first)
-				d.commitCurrent()
+				if err := d.commitCurrent(); err != nil {
+					log.Printf("[OUTPUT] commit current failed: %v", err)
+					return
+				}
 				d.hangul.cho = newCho
 				d.hangul.jung = jungIdx
 				d.hangul.jong = 0
@@ -1409,7 +1609,10 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 			} else {
 				newCho := int(jongseongToChoseong[d.hangul.jong])
 				d.hangul.jong = 0
-				d.commitCurrent()
+				if err := d.commitCurrent(); err != nil {
+					log.Printf("[OUTPUT] commit current failed: %v", err)
+					return
+				}
 				d.hangul.cho = newCho
 				d.hangul.jung = jungIdx
 				d.hangul.jong = 0
@@ -1422,14 +1625,20 @@ func (d *Daemon) handleKoreanKey(keyCode uint16, pressed bool) {
 				d.hangul.jong = compound
 				d.scheduleIdleFlush()
 			} else {
-				d.commitCurrent()
+				if err := d.commitCurrent(); err != nil {
+					log.Printf("[OUTPUT] commit current failed: %v", err)
+					return
+				}
 				d.hangul.cho = choIdx
 				d.hangul.state = stateChoseong
 				d.pendingVisible = false
 				d.maybePreviewCurrent()
 			}
 		} else if isChoseong {
-			d.commitCurrent()
+			if err := d.commitCurrent(); err != nil {
+				log.Printf("[OUTPUT] commit current failed: %v", err)
+				return
+			}
 			d.hangul.cho = choIdx
 			d.hangul.state = stateChoseong
 			d.pendingVisible = false
@@ -1447,19 +1656,28 @@ func (d *Daemon) handleBackspace() {
 			d.hangul.jong = 0
 			d.hangul.state = stateJungseong
 		}
-		d.renderBackspaceStep(composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong))
+		if err := d.renderBackspaceStep(composeSyllable(d.hangul.cho, d.hangul.jung, d.hangul.jong)); err != nil {
+			log.Printf("[OUTPUT] render backspace step failed: %v", err)
+		}
 	case stateJungseong:
 		if split := splitCompoundJungseong(d.hangul.jung); split.ok {
 			d.hangul.jung = int(split.first)
-			d.renderBackspaceStep(composeSyllable(d.hangul.cho, d.hangul.jung, 0))
+			if err := d.renderBackspaceStep(composeSyllable(d.hangul.cho, d.hangul.jung, 0)); err != nil {
+				log.Printf("[OUTPUT] render backspace step failed: %v", err)
+			}
 		} else {
 			d.hangul.jung = 0
 			d.hangul.state = stateChoseong
-			d.renderBackspaceStep(choseongToJamo[d.hangul.cho])
+			if err := d.renderBackspaceStep(choseongToJamo[d.hangul.cho]); err != nil {
+				log.Printf("[OUTPUT] render backspace step failed: %v", err)
+			}
 		}
 	case stateChoseong:
 		if d.pendingVisible {
-			d.sendBackspace()
+			if err := d.sendBackspace(); err != nil {
+				log.Printf("[OUTPUT] backspace failed: %v", err)
+				return
+			}
 		}
 		d.resetCompose()
 	}
@@ -1482,7 +1700,9 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	if ev.Code == KEY_LEFTCTRL || ev.Code == KEY_LEFTALT {
 		if ev.Value == keyPress {
 			d.ctrl_or_alt = true
-			d.commitCurrent() // 한글 조합 중이면 확정
+			if err := d.commitCurrent(); err != nil {
+				log.Printf("[OUTPUT] commit current failed: %v", err)
+			}
 			d.restoreKeymap()
 		} else if ev.Value == keyRelease {
 			d.ctrl_or_alt = false
@@ -1494,7 +1714,9 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	// CapsLock 한영 모드 전환
 	if ev.Code == KEY_CAPSLOCK {
 		if ev.Value == keyPress {
-			d.commitCurrent()
+			if err := d.commitCurrent(); err != nil {
+				log.Printf("[OUTPUT] commit current failed: %v", err)
+			}
 			d.restoreKeymap()
 			d.korean = !d.korean
 			if d.korean {
@@ -1524,13 +1746,22 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 			return
 		}
 		if char, ok := specialPassthroughRune(ev.Code, d.shifted); ok {
-			d.commitCurrent()
-			d.outputChar(char, 0, false)
+			if err := d.commitCurrent(); err != nil {
+				log.Printf("[OUTPUT] commit current failed: %v", err)
+				return
+			}
+			if err := d.outputChar(char, 0, false); err != nil {
+				log.Printf("[OUTPUT] special passthrough output failed: %v", err)
+				return
+			}
 			d.resetCompose()
 			return
 		}
 		if ev.Code == KEY_SPACE || ev.Code == KEY_ENTER || ev.Code == KEY_TAB {
-			d.commitCurrent()
+			if err := d.commitCurrent(); err != nil {
+				log.Printf("[OUTPUT] commit current failed: %v", err)
+				return
+			}
 			d.passthroughWithShift(ev)
 			return
 		}
@@ -1542,7 +1773,10 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 			d.passthroughWithShift(ev)
 			return
 		}
-		d.commitCurrent()
+		if err := d.commitCurrent(); err != nil {
+			log.Printf("[OUTPUT] commit current failed: %v", err)
+			return
+		}
 		d.passthroughWithShift(ev)
 		return
 	}
@@ -1559,7 +1793,7 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	d.passthroughWithShift(ev)
 }
 
-func findBTKeyboard() (string, error) {
+func findBTKeyboard(verbose bool) (string, error) {
 	entries, err := os.ReadDir("/dev/input")
 	if err != nil {
 		return "", fmt.Errorf("readdir /dev/input: %w", err)
@@ -1578,7 +1812,9 @@ func findBTKeyboard() (string, error) {
 			continue
 		}
 		name := strings.TrimSpace(string(nameBytes))
-		log.Printf("입력 디바이스 발견: %s = %s", devPath, name)
+		if verbose || debugLogging {
+			log.Printf("입력 디바이스 발견: %s = %s", devPath, name)
+		}
 
 		lowerName := strings.ToLower(strings.TrimSpace(name))
 		if lowerName == "" {
@@ -1667,13 +1903,65 @@ func (d *Daemon) closeInput() {
 	}
 }
 
+type inputDirWatcher struct {
+	fd int
+}
+
+func newInputDirWatcher() (*inputDirWatcher, error) {
+	fd, err := syscall.InotifyInit()
+	if err != nil {
+		return nil, err
+	}
+	mask := uint32(syscall.IN_CREATE | syscall.IN_DELETE | syscall.IN_ATTRIB | syscall.IN_MOVED_TO | syscall.IN_MOVED_FROM)
+	if _, err := syscall.InotifyAddWatch(fd, "/dev/input", mask); err != nil {
+		_ = syscall.Close(fd)
+		return nil, err
+	}
+	return &inputDirWatcher{fd: fd}, nil
+}
+
+func (w *inputDirWatcher) close() {
+	if w != nil && w.fd >= 0 {
+		_ = syscall.Close(w.fd)
+		w.fd = -1
+	}
+}
+
+func (w *inputDirWatcher) wait() error {
+	if w == nil || w.fd < 0 {
+		return fmt.Errorf("input watcher not initialized")
+	}
+	var buf [4096]byte
+	for {
+		_, err := syscall.Read(w.fd, buf[:])
+		if err == nil {
+			return nil
+		}
+		if err == syscall.EINTR {
+			continue
+		}
+		return err
+	}
+}
+
 func waitForKeyboard() string {
 	for {
-		path, err := findBTKeyboard()
-		if err == nil {
+		watcher, err := newInputDirWatcher()
+		if err != nil {
+			if path, scanErr := findBTKeyboard(false); scanErr == nil {
+				return path
+			}
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		if path, err := findBTKeyboard(false); err == nil {
+			watcher.close()
 			return path
 		}
-		time.Sleep(2 * time.Second)
+
+		_ = watcher.wait()
+		watcher.close()
 	}
 }
 
@@ -1701,11 +1989,10 @@ func (d *Daemon) run(devicePath string) error {
 	if err := d.setupUinput(); err != nil {
 		return fmt.Errorf("setup uinput: %w", err)
 	}
-	if err := d.activateOutputLayout(); err != nil {
-		return fmt.Errorf("activate output layout: %w", err)
-	}
-
 	d.korean = true
+	if err := d.reinitializeOutputLayoutForCurrentMode(); err != nil {
+		return fmt.Errorf("initial output layout reinit: %w", err)
+	}
 	log.Println("모드: 한글 (CapsLock으로 전환)")
 
 	currentPath := devicePath
@@ -1718,14 +2005,27 @@ func (d *Daemon) run(devicePath string) error {
 			continue
 		}
 
+		d.mu.Lock()
+		err := d.reinitializeOutputLayoutForCurrentMode()
+		d.mu.Unlock()
+		if err != nil {
+			d.closeInput()
+			log.Printf("출력 레이아웃 재초기화 실패: %v", err)
+			log.Println("BT 키보드 재연결 대기 중...")
+			currentPath = waitForKeyboard()
+			continue
+		}
+
 		log.Printf("이벤트 루프 시작: %s", currentPath)
-		err := d.eventLoop()
+		loopErr := d.eventLoop()
 		d.closeInput()
 
-		if err != nil {
-			log.Printf("이벤트 루프 오류: %v", err)
+		if loopErr != nil {
+			log.Printf("이벤트 루프 오류: %v", loopErr)
 			log.Println("BT 키보드 재연결 대기 중...")
-			d.commitCurrent()
+			if err := d.commitCurrent(); err != nil {
+				log.Printf("[OUTPUT] commit current failed during reconnect: %v", err)
+			}
 			currentPath = waitForKeyboard()
 		}
 	}
@@ -1763,12 +2063,18 @@ func (d *Daemon) eventLoop() error {
 func (d *Daemon) cleanup() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.cancelIdleFlush()
 	d.closeInput()
 	if d.patcher != nil {
 		for _, slot := range d.outputSlots {
 			_ = d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod)
 		}
-		d.patcher.restoreDisk()
+		if err := d.patcher.writeToDisk(d.patcher.origUnicode, d.patcher.origQtcode); err != nil {
+			log.Printf("[PATCHER] 디스크 원본 복원 실패: %v", err)
+		} else {
+			log.Printf("[PATCHER] 디스크 원본 복원 완료")
+		}
+		d.patcher.close()
 	}
 	if d.uinputFd != nil {
 		_ = ioctl(d.uinputFd.Fd(), UI_DEV_DESTROY, 0)

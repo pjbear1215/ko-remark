@@ -15,7 +15,9 @@ HOOK_SRC="$BASEDIR/hangul_hook.so"
 KBDS_SRC="$BASEDIR/kbds"
 KBDS_DST="/home/root/.kbds"
 LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
-LIBEPAPER_BACKUP="$BASEDIR/libepaper.so.original"
+LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"
+LIBEPAPER_BACKUP="$BASEDIR/backup/libepaper.so.original"
+LEGACY_LIBEPAPER_BACKUP="$BASEDIR/libepaper.so.original"
 BT_BACKUP="$BASEDIR/bt-pairing"
 BT_SRC="/var/lib/bluetooth"
 HOOK_DROPIN_DIR="/usr/lib/systemd/system/xochitl.service.d"
@@ -23,6 +25,60 @@ HOOK_DROPIN="$HOOK_DROPIN_DIR/zz-hangul-hook.conf"
 XOCHITL="/usr/bin/xochitl"
 XOCHITL_ORIGINAL="$BASEDIR/backup/xochitl.original"
 XOCHITL_PATCHED="$BASEDIR/backup/xochitl.patched"
+
+resolve_libepaper_mount_target() {
+    if grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; then
+        printf '%s\n' "$LIBEPAPER"
+        return 0
+    fi
+    if grep -q ' /usr/lib/plugins/platforms ' /proc/mounts 2>/dev/null; then
+        printf '%s\n' "/usr/lib/plugins/platforms"
+        return 0
+    fi
+    return 1
+}
+
+unmount_libepaper_mounts() {
+    while mounted_target="$(resolve_libepaper_mount_target)"; do
+        if ! umount "$mounted_target" 2>/dev/null; then
+            echo "failed to unmount existing libepaper mount: $mounted_target" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
+ensure_tmpfs_libepaper() {
+    src=""
+    if [ -f "$LIBEPAPER_BACKUP" ]; then
+        src="$LIBEPAPER_BACKUP"
+    elif [ -f "$LIBEPAPER" ]; then
+        src="$LIBEPAPER"
+    fi
+
+    if [ -z "$src" ]; then
+        return 0
+    fi
+
+    unmount_libepaper_mounts
+
+    rm -f "$LIBEPAPER_TMPFS"
+    cp "$src" "$LIBEPAPER_TMPFS"
+    if [ ! -f "$LIBEPAPER_TMPFS" ]; then
+        echo "tmpfs source missing after copy: $LIBEPAPER_TMPFS" >&2
+        return 1
+    fi
+    if [ ! -f "$LIBEPAPER" ]; then
+        echo "bind mount target missing: $LIBEPAPER" >&2
+        return 1
+    fi
+    mount -o bind "$LIBEPAPER_TMPFS" "$LIBEPAPER"
+}
+
+if [ ! -f "$LIBEPAPER_BACKUP" ] && [ -f "$LEGACY_LIBEPAPER_BACKUP" ]; then
+    mkdir -p "$(dirname "$LIBEPAPER_BACKUP")"
+    cp "$LEGACY_LIBEPAPER_BACKUP" "$LIBEPAPER_BACKUP"
+fi
 
 echo "=========================================="
 echo " reMarkable Korean Input Installer v2.4"
@@ -226,7 +282,12 @@ fi
 # 7. hangul-daemon systemd service (BT keyboard) — bt only
 if [ "$INSTALL_BT" = "1" ]; then
     echo "[7/10] Installing hangul-daemon service..."
+    systemctl stop xochitl 2>/dev/null || true
+    systemctl stop hangul-daemon.service 2>/dev/null || true
     killall hangul-daemon 2>/dev/null || true
+    # Clean up any existing libepaper tmpfs mount left by an older install.
+    unmount_libepaper_mounts
+    rm -f "$LIBEPAPER_TMPFS"
     sleep 1
 
     if [ -f "$SERVICE_SRC" ]; then
@@ -264,6 +325,10 @@ if [ -f "$LIBEPAPER" ]; then
     else
         echo "  OK: Backup already exists"
     fi
+fi
+if [ "$INSTALL_BT" = "1" ] && [ -f "$LIBEPAPER_BACKUP" -o -f "$LIBEPAPER" ]; then
+    ensure_tmpfs_libepaper
+    echo "  OK: tmpfs-backed libepaper mounted"
 fi
 
 # 9. SWUpdate post-update hook (펌웨어 업데이트 후 한글 자동 복구)
@@ -514,8 +579,11 @@ if [ -f "$CONF" ]; then
 fi
 rm -f /etc/swupdate/conf.d/99-hangul-postupdate
 # hangul-daemon, hangul-restore 서비스 비활성화 및 제거
+systemctl stop hangul-daemon.service 2>/dev/null || true
 systemctl disable hangul-daemon.service 2>/dev/null || true
 systemctl disable hangul-restore.service 2>/dev/null || true
+unmount_libepaper_mounts
+rm -f "$LIBEPAPER_TMPFS"
 rm -f /etc/systemd/system/hangul-daemon.service
 rm -f /etc/systemd/system/hangul-restore.service
 rm -f /etc/systemd/system/multi-user.target.wants/hangul-daemon.service
