@@ -115,6 +115,9 @@ const (
 	maxIdleFlushDelay      = 260 * time.Millisecond
 	adaptiveMinKeyGap      = 40 * time.Millisecond
 	adaptiveMaxKeyGap      = 400 * time.Millisecond
+	virtualKeyboardName    = "Hangul Virtual Keyboard"
+	uinputReadyTimeout     = 1500 * time.Millisecond
+	maxOutputBatchJobs     = 64
 )
 
 // uinput 구조체
@@ -182,6 +185,29 @@ type InputMessage struct {
 	Path  string
 	Event InputEvent
 	Err   error
+}
+
+type outputEvent struct {
+	typ   uint16
+	code  uint16
+	value int32
+}
+
+type outputJobKind int
+
+const (
+	outputJobEmitSequence outputJobKind = iota
+	outputJobSyncLayout
+	outputJobPatchSlot
+	outputJobRestoreLayout
+)
+
+type outputJob struct {
+	kind     outputJobKind
+	sequence []outputEvent
+	layout   []outputSlot
+	spec     keyPatchSpec
+	char     rune
 }
 
 func makeKeyIndexTable(pairs ...keyIndexPair) [maxKeyCode + 1]int8 {
@@ -863,6 +889,9 @@ type Daemon struct {
 	inputs         map[string]*ManagedInput
 	inputCh        chan InputMessage
 	rescanCh       chan struct{}
+	outputCh       chan outputJob
+	outputStopCh   chan struct{}
+	outputWg       sync.WaitGroup
 	uinputFd       *os.File
 	korean         bool
 	shifted        bool
@@ -929,6 +958,67 @@ func (d *Daemon) setupUinput() error {
 	return nil
 }
 
+func findVirtualKeyboardEventPaths() ([]string, error) {
+	entries, err := os.ReadDir("/sys/class/input")
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, 1)
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "event") {
+			continue
+		}
+		nameBytes, err := os.ReadFile("/sys/class/input/" + entry.Name() + "/device/name")
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(nameBytes)) != virtualKeyboardName {
+			continue
+		}
+		paths = append(paths, "/dev/input/"+entry.Name())
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("virtual keyboard event node not found")
+	}
+	return paths, nil
+}
+
+func processHasOpenPath(pid int, target string) bool {
+	entries, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		linkTarget, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, entry.Name()))
+		if err != nil {
+			continue
+		}
+		if linkTarget == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *Daemon) waitForUinputReady(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pid, err := findXochitlPID()
+		if err == nil {
+			paths, pathErr := findVirtualKeyboardEventPaths()
+			if pathErr == nil {
+				for _, path := range paths {
+					if processHasOpenPath(pid, path) {
+						return nil
+					}
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return fmt.Errorf("xochitl did not open %q within %s", virtualKeyboardName, timeout)
+}
+
 // recreateUinput: uinput 디바이스를 파괴하고 재생성
 // xochitl이 새 핸들러를 생성하며, 이때 디스크의 (패치된) 키맵을 로드
 func (d *Daemon) recreateUinput() error {
@@ -942,8 +1032,13 @@ func (d *Daemon) recreateUinput() error {
 		return fmt.Errorf("recreate uinput: %w", err)
 	}
 
-	// xochitl이 새 디바이스를 감지하고 핸들러를 생성할 때까지 대기
-	time.Sleep(80 * time.Millisecond)
+	if _, err := findXochitlPID(); err != nil {
+		time.Sleep(80 * time.Millisecond)
+		return nil
+	}
+	if err := d.waitForUinputReady(uinputReadyTimeout); err != nil {
+		log.Printf("[UINPUT] ready wait timed out: %v", err)
+	}
 
 	return nil
 }
@@ -960,82 +1055,304 @@ func (d *Daemon) writeEvent(typ uint16, code uint16, value int32) error {
 	return err
 }
 
+func synSequenceEvent() outputEvent {
+	return outputEvent{typ: EV_SYN, code: SYN_REPORT, value: 0}
+}
+
+func passthroughSequence(ev InputEvent) []outputEvent {
+	return []outputEvent{{typ: ev.Type, code: ev.Code, value: ev.Value}}
+}
+
+func keyTapSequence(code uint16) []outputEvent {
+	return []outputEvent{
+		{typ: EV_KEY, code: code, value: keyPress},
+		{typ: EV_KEY, code: code, value: keyRelease},
+		synSequenceEvent(),
+	}
+}
+
+func mappedKeyTapSequence(key mappedKey) []outputEvent {
+	seq := make([]outputEvent, 0, 5)
+	if key.shifted {
+		seq = append(seq, outputEvent{typ: EV_KEY, code: KEY_LEFTSHIFT, value: keyPress})
+	}
+	seq = append(seq,
+		outputEvent{typ: EV_KEY, code: key.code, value: keyPress},
+		outputEvent{typ: EV_KEY, code: key.code, value: keyRelease},
+	)
+	if key.shifted {
+		seq = append(seq, outputEvent{typ: EV_KEY, code: KEY_LEFTSHIFT, value: keyRelease})
+	}
+	seq = append(seq, synSequenceEvent())
+	return seq
+}
+
+func mappedReplaceSequence(key mappedKey) []outputEvent {
+	seq := make([]outputEvent, 0, 7)
+	seq = append(seq,
+		outputEvent{typ: EV_KEY, code: KEY_BACKSPACE, value: keyPress},
+		outputEvent{typ: EV_KEY, code: KEY_BACKSPACE, value: keyRelease},
+	)
+	if key.shifted {
+		seq = append(seq, outputEvent{typ: EV_KEY, code: KEY_LEFTSHIFT, value: keyPress})
+	}
+	seq = append(seq,
+		outputEvent{typ: EV_KEY, code: key.code, value: keyPress},
+		outputEvent{typ: EV_KEY, code: key.code, value: keyRelease},
+	)
+	if key.shifted {
+		seq = append(seq, outputEvent{typ: EV_KEY, code: KEY_LEFTSHIFT, value: keyRelease})
+	}
+	seq = append(seq, synSequenceEvent())
+	return seq
+}
+
+func passthroughWithShiftSequence(ev InputEvent, korean bool) []outputEvent {
+	if korean {
+		if ev.Value == keyPress {
+			return []outputEvent{
+				{typ: EV_KEY, code: KEY_LEFTSHIFT, value: keyPress},
+				{typ: EV_KEY, code: ev.Code, value: keyPress},
+				{typ: EV_KEY, code: ev.Code, value: keyRelease},
+				{typ: EV_KEY, code: KEY_LEFTSHIFT, value: keyRelease},
+				synSequenceEvent(),
+			}
+		}
+		if ev.Value == keyRelease {
+			return nil
+		}
+	}
+
+	if ev.Value == keyPress {
+		return []outputEvent{
+			{typ: EV_KEY, code: KEY_LEFTSHIFT, value: keyPress},
+			{typ: EV_KEY, code: ev.Code, value: keyPress},
+			synSequenceEvent(),
+		}
+	}
+	if ev.Value == keyRelease {
+		return []outputEvent{
+			{typ: EV_KEY, code: ev.Code, value: keyRelease},
+			{typ: EV_KEY, code: KEY_LEFTSHIFT, value: keyRelease},
+			synSequenceEvent(),
+		}
+	}
+	return passthroughSequence(ev)
+}
+
+func (d *Daemon) emitSequence(seq []outputEvent) error {
+	for _, ev := range seq {
+		if err := d.writeEvent(ev.typ, ev.code, ev.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (d *Daemon) sendKey(code uint16, press bool) error {
 	val := int32(keyRelease)
 	if press {
 		val = keyPress
 	}
-	if err := d.writeEvent(EV_KEY, code, val); err != nil {
-		return err
-	}
-	if err := d.writeEvent(EV_SYN, SYN_REPORT, 0); err != nil {
-		return err
-	}
-	return nil
+	return d.enqueueOutputJob(outputJob{
+		kind:     outputJobEmitSequence,
+		sequence: []outputEvent{{typ: EV_KEY, code: code, value: val}, synSequenceEvent()},
+	})
 }
 
 func (d *Daemon) sendKeyTap(code uint16) error {
-	if err := d.writeEvent(EV_KEY, code, keyPress); err != nil {
-		return err
-	}
-	if err := d.writeEvent(EV_KEY, code, keyRelease); err != nil {
-		return err
-	}
-	return d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	return d.enqueueOutputJob(outputJob{kind: outputJobEmitSequence, sequence: keyTapSequence(code)})
 }
 
 func (d *Daemon) sendMappedKeyTap(key mappedKey) error {
-	if key.shifted {
-		if err := d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress); err != nil {
-			return err
-		}
-	}
-	if err := d.writeEvent(EV_KEY, key.code, keyPress); err != nil {
-		return err
-	}
-	if err := d.writeEvent(EV_KEY, key.code, keyRelease); err != nil {
-		return err
-	}
-	if key.shifted {
-		if err := d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease); err != nil {
-			return err
-		}
-	}
-	return d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	return d.enqueueOutputJob(outputJob{kind: outputJobEmitSequence, sequence: mappedKeyTapSequence(key)})
 }
 
 func (d *Daemon) sendMappedReplace(key mappedKey) error {
-	if err := d.writeEvent(EV_KEY, KEY_BACKSPACE, keyPress); err != nil {
-		return err
-	}
-	if err := d.writeEvent(EV_KEY, KEY_BACKSPACE, keyRelease); err != nil {
-		return err
-	}
-	if key.shifted {
-		if err := d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress); err != nil {
-			return err
-		}
-	}
-	if err := d.writeEvent(EV_KEY, key.code, keyPress); err != nil {
-		return err
-	}
-	if err := d.writeEvent(EV_KEY, key.code, keyRelease); err != nil {
-		return err
-	}
-	if key.shifted {
-		if err := d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease); err != nil {
-			return err
-		}
-	}
-	return d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	return d.enqueueOutputJob(outputJob{kind: outputJobEmitSequence, sequence: mappedReplaceSequence(key)})
 }
 
 func (d *Daemon) sendBackspace() error {
 	return d.sendKeyTap(KEY_BACKSPACE)
 }
 
+func cloneOutputLayout(slots []outputSlot) []outputSlot {
+	if len(slots) == 0 {
+		return nil
+	}
+	cloned := make([]outputSlot, len(slots))
+	copy(cloned, slots)
+	return cloned
+}
+
+func (d *Daemon) applyOutputLayoutSnapshot(layout []outputSlot) error {
+	for _, slot := range layout {
+		if slot.char != 0 {
+			if err := d.patcher.writeKeyEntryToDisk(slot.spec.code, slot.spec.mod, uint16(slot.char), uint32(slot.char)); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Daemon) enqueueOutputJob(job outputJob) error {
+	if d.outputCh == nil {
+		return fmt.Errorf("output worker not initialized")
+	}
+	select {
+	case <-d.outputStopCh:
+		return fmt.Errorf("output worker stopped")
+	default:
+	}
+	d.outputCh <- job
+	return nil
+}
+
+func (d *Daemon) startOutputWorker() {
+	if d.outputCh == nil || d.outputStopCh == nil {
+		return
+	}
+	d.outputWg.Add(1)
+	go func() {
+		defer d.outputWg.Done()
+		for {
+			select {
+			case <-d.outputStopCh:
+				return
+			case job := <-d.outputCh:
+				batch := d.drainOutputBatch(job)
+				if err := d.runOutputBatch(batch); err != nil {
+					log.Printf("[OUTPUT] worker job failed: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func (d *Daemon) stopOutputWorkerLocked() {
+	if d.outputStopCh == nil {
+		return
+	}
+	close(d.outputStopCh)
+	d.outputStopCh = nil
+	d.outputWg.Wait()
+	d.outputCh = nil
+}
+
+func (d *Daemon) drainOutputBatch(first outputJob) []outputJob {
+	batch := []outputJob{first}
+	for len(batch) < maxOutputBatchJobs {
+		select {
+		case job := <-d.outputCh:
+			batch = append(batch, job)
+		default:
+			return batch
+		}
+	}
+	return batch
+}
+
+func (d *Daemon) runSyncLayoutJob(job outputJob) error {
+	if err := d.applyOutputLayoutSnapshot(job.layout); err != nil {
+		return fmt.Errorf("sync output layout: %w", err)
+	}
+	if err := d.recreateUinput(); err != nil {
+		return fmt.Errorf("sync output layout recreate: %w", err)
+	}
+	return nil
+}
+
+func (d *Daemon) runPatchSlotBatch(jobs []outputJob) error {
+	var snapshot []outputSlot
+	for _, job := range jobs {
+		if err := d.patcher.writeKeyEntryToDisk(job.spec.code, job.spec.mod, uint16(job.char), uint32(job.char)); err != nil {
+			return fmt.Errorf("patch slot %s shift=%t for %q: %w", keyCodeName(job.spec.code), job.spec.mod != 0, job.char, err)
+		}
+		if len(job.layout) > 0 {
+			snapshot = job.layout
+		}
+	}
+	if err := d.recreateUinput(); err != nil {
+		if len(snapshot) > 0 {
+			if syncErr := d.applyOutputLayoutSnapshot(snapshot); syncErr == nil {
+				_ = d.recreateUinput()
+			}
+		}
+		return fmt.Errorf("patch slot batch recreate: %w", err)
+	}
+	return nil
+}
+
+func (d *Daemon) runRestoreLayoutJob(job outputJob) error {
+	for _, slot := range job.layout {
+		if err := d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod); err != nil {
+			return fmt.Errorf("restore output layout: %w", err)
+		}
+	}
+	if d.uinputFd != nil {
+		if err := d.recreateUinput(); err != nil {
+			return fmt.Errorf("restore output layout recreate: %w", err)
+		}
+	}
+	return nil
+}
+
+func (d *Daemon) runOutputBatch(batch []outputJob) error {
+	for i := 0; i < len(batch); {
+		switch batch[i].kind {
+		case outputJobEmitSequence:
+			seq := make([]outputEvent, 0)
+			for i < len(batch) && batch[i].kind == outputJobEmitSequence {
+				seq = append(seq, batch[i].sequence...)
+				i++
+			}
+			if err := d.emitSequence(seq); err != nil {
+				return fmt.Errorf("emit batched sequence: %w", err)
+			}
+		case outputJobPatchSlot:
+			start := i
+			for i < len(batch) && batch[i].kind == outputJobPatchSlot {
+				i++
+			}
+			if err := d.runPatchSlotBatch(batch[start:i]); err != nil {
+				return err
+			}
+		case outputJobSyncLayout:
+			job := batch[i]
+			i++
+			for i < len(batch) && batch[i].kind == outputJobSyncLayout {
+				job = batch[i]
+				i++
+			}
+			if err := d.runSyncLayoutJob(job); err != nil {
+				return err
+			}
+		case outputJobRestoreLayout:
+			job := batch[i]
+			i++
+			for i < len(batch) && batch[i].kind == outputJobRestoreLayout {
+				job = batch[i]
+				i++
+			}
+			if err := d.runRestoreLayoutJob(job); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown output job kind: %d", batch[i].kind)
+		}
+	}
+	return nil
+}
+
 func (d *Daemon) passthrough(ev InputEvent) {
-	_ = d.writeEvent(ev.Type, ev.Code, ev.Value)
+	if err := d.enqueueOutputJob(outputJob{kind: outputJobEmitSequence, sequence: passthroughSequence(ev)}); err != nil {
+		log.Printf("[OUTPUT] passthrough enqueue failed: %v", err)
+	}
 }
 
 func specialPassthroughRune(code uint16, shifted bool) (rune, bool) {
@@ -1050,39 +1367,13 @@ func (d *Daemon) passthroughWithShift(ev InputEvent) {
 		d.passthrough(ev)
 		return
 	}
-
-	// In Korean mode, shifted symbol passthrough must not leave Shift logically
-	// pressed across subsequent Hangul key presses. Emit a complete chord on
-	// keyPress and swallow the matching keyRelease.
-	if d.korean {
-		if ev.Value == keyPress {
-			_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
-			_ = d.writeEvent(EV_KEY, ev.Code, keyPress)
-			_ = d.writeEvent(EV_KEY, ev.Code, keyRelease)
-			_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
-			_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
-			return
-		}
-		if ev.Value == keyRelease {
-			return
-		}
-	}
-
-	if ev.Value == keyPress {
-		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyPress)
-		_ = d.writeEvent(EV_KEY, ev.Code, keyPress)
-		_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
+	seq := passthroughWithShiftSequence(ev, d.korean)
+	if len(seq) == 0 {
 		return
 	}
-
-	if ev.Value == keyRelease {
-		_ = d.writeEvent(EV_KEY, ev.Code, keyRelease)
-		_ = d.writeEvent(EV_KEY, KEY_LEFTSHIFT, keyRelease)
-		_ = d.writeEvent(EV_SYN, SYN_REPORT, 0)
-		return
+	if err := d.enqueueOutputJob(outputJob{kind: outputJobEmitSequence, sequence: seq}); err != nil {
+		log.Printf("[OUTPUT] shifted passthrough enqueue failed: %v", err)
 	}
-
-	d.passthrough(ev)
 }
 
 func (d *Daemon) signalRescan() {
@@ -1135,29 +1426,16 @@ func (d *Daemon) initOutputSpecs() error {
 }
 
 func (d *Daemon) applyOutputLayoutToDisk() error {
-	for _, slot := range d.outputSlots {
-		if slot.char != 0 {
-			if err := d.patcher.writeKeyEntryToDisk(slot.spec.code, slot.spec.mod, uint16(slot.char), uint32(slot.char)); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod); err != nil {
-			return err
-		}
-	}
-	return nil
+	return d.applyOutputLayoutSnapshot(d.outputSlots)
 }
 
 func (d *Daemon) activateOutputLayout() error {
 	if d.layoutActive {
 		return nil
 	}
-	if err := d.applyOutputLayoutToDisk(); err != nil {
-		return fmt.Errorf("apply output layout: %w", err)
-	}
-	if err := d.recreateUinput(); err != nil {
-		return fmt.Errorf("activate output layout: %w", err)
+	snapshot := cloneOutputLayout(d.outputSlots)
+	if err := d.enqueueOutputJob(outputJob{kind: outputJobSyncLayout, layout: snapshot}); err != nil {
+		return fmt.Errorf("queue output layout sync: %w", err)
 	}
 	d.layoutActive = true
 	return nil
@@ -1167,15 +1445,11 @@ func (d *Daemon) restoreOutputLayout() error {
 	if d.patcher == nil {
 		return nil
 	}
-	for _, slot := range d.outputSlots {
-		if err := d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod); err != nil {
-			return err
-		}
+	if !d.layoutActive {
+		return nil
 	}
-	if d.uinputFd != nil {
-		if err := d.recreateUinput(); err != nil {
-			return err
-		}
+	if err := d.enqueueOutputJob(outputJob{kind: outputJobRestoreLayout, layout: cloneOutputLayout(d.outputSlots)}); err != nil {
+		return fmt.Errorf("queue output layout restore: %w", err)
 	}
 	d.layoutActive = false
 	return nil
@@ -1246,29 +1520,9 @@ func (d *Daemon) assignLRUSlot(char rune) (mappedKey, error) {
 
 	slot := &d.outputSlots[slotIndex]
 	prevChar := slot.char
+	prevLastUsed := slot.lastUsed
 	newTick := d.lruUseTick + 1
 	key := mappedKeyFromSpec(slot.spec)
-
-	if d.layoutActive {
-		if err := d.patcher.writeKeyEntryToDisk(slot.spec.code, slot.spec.mod, uint16(char), uint32(char)); err != nil {
-			return mappedKey{}, err
-		}
-		if err := d.recreateUinput(); err != nil {
-			var restoreErr error
-			if prevChar != 0 {
-				restoreErr = d.patcher.writeKeyEntryToDisk(slot.spec.code, slot.spec.mod, uint16(prevChar), uint32(prevChar))
-			} else {
-				restoreErr = d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod)
-			}
-			if restoreErr == nil {
-				_ = d.recreateUinput()
-			}
-			if restoreErr != nil {
-				return mappedKey{}, fmt.Errorf("recreate uinput after patching %q failed: %w (rollback failed: %v)", char, err, restoreErr)
-			}
-			return mappedKey{}, fmt.Errorf("recreate uinput after patching %q failed: %w", char, err)
-		}
-	}
 
 	if prevChar != 0 {
 		delete(d.outputMap, prevChar)
@@ -1280,6 +1534,27 @@ func (d *Daemon) assignLRUSlot(char rune) (mappedKey, error) {
 	d.outputMap[char] = key
 	d.outputIndex[char] = slotIndex
 
+	if d.layoutActive {
+		snapshot := cloneOutputLayout(d.outputSlots)
+		if err := d.enqueueOutputJob(outputJob{
+			kind:   outputJobPatchSlot,
+			layout: snapshot,
+			spec:   slot.spec,
+			char:   char,
+		}); err != nil {
+			if prevChar != 0 {
+				d.outputMap[prevChar] = key
+				d.outputIndex[prevChar] = slotIndex
+			}
+			delete(d.outputMap, char)
+			delete(d.outputIndex, char)
+			slot.char = prevChar
+			slot.lastUsed = prevLastUsed
+			d.lruUseTick--
+			return mappedKey{}, fmt.Errorf("queue patch slot for %q: %w", char, err)
+		}
+	}
+
 	return key, nil
 }
 
@@ -1287,9 +1562,6 @@ func (d *Daemon) assignLRUSlot(char rune) (mappedKey, error) {
 func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) error {
 	if d.patcher == nil {
 		return fmt.Errorf("patcher not initialized")
-	}
-	if err := d.activateOutputLayout(); err != nil {
-		return fmt.Errorf("activate output layout: %w", err)
 	}
 
 	key, ok := d.lookupOutputChar(char)
@@ -1299,6 +1571,9 @@ func (d *Daemon) outputChar(char rune, backspaces int, batchReplace bool) error 
 		if err != nil {
 			return fmt.Errorf("assign output slot: %w", err)
 		}
+	}
+	if err := d.activateOutputLayout(); err != nil {
+		return fmt.Errorf("activate output layout: %w", err)
 	}
 
 	if batchReplace && backspaces == 1 {
@@ -2107,7 +2382,10 @@ func (d *Daemon) run(preferredPath string) error {
 		return fmt.Errorf("initial output layout reinit: %w", err)
 	}
 	log.Println("모드: 한글 (CapsLock으로 전환)")
-	d.inputCh = make(chan InputMessage, 128)
+	d.outputCh = make(chan outputJob, 1024)
+	d.outputStopCh = make(chan struct{})
+	d.startOutputWorker()
+	d.inputCh = make(chan InputMessage, 1024)
 	d.rescanCh = make(chan struct{}, 1)
 	d.inputs = make(map[string]*ManagedInput)
 
@@ -2162,6 +2440,7 @@ func (d *Daemon) cleanup() {
 	defer d.mu.Unlock()
 	d.cancelIdleFlush()
 	d.closeAllInputsLocked()
+	d.stopOutputWorkerLocked()
 	if d.patcher != nil {
 		for _, slot := range d.outputSlots {
 			_ = d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod)
