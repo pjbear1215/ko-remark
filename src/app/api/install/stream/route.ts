@@ -353,7 +353,6 @@ SERVICE_SRC="$BASEDIR/hangul-daemon.service"
 LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
 LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"
 LIBEPAPER_BACKUP="$BASEDIR/backup/libepaper.so.original"
-LEGACY_LIBEPAPER_BACKUP="$BASEDIR/libepaper.so.original"
 LIBEPAPER_NEW_BACKUP="$BASEDIR/backup/libepaper.so.latest"
 XOCHITL="/usr/bin/xochitl"
 XOCHITL_ORIGINAL="$BASEDIR/backup/xochitl.original"
@@ -369,11 +368,6 @@ if [ -f "$STATE_FILE" ]; then
     . "$STATE_FILE"
 fi
 INSTALL_KEYPAD=0
-
-if [ ! -f "$LIBEPAPER_BACKUP" ] && [ -f "$LEGACY_LIBEPAPER_BACKUP" ]; then
-    mkdir -p "$(dirname "$LIBEPAPER_BACKUP")"
-    cp "$LEGACY_LIBEPAPER_BACKUP" "$LIBEPAPER_BACKUP"
-fi
 
 resolve_libepaper_mount_target() {
     if grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; then
@@ -1192,9 +1186,9 @@ export async function GET(request: NextRequest): Promise<Response> {
           await runSsh(
             ip,
             password,
-            "systemctl stop hangul-daemon.service 2>/dev/null || true; systemctl stop hangul-restore.service 2>/dev/null || true",
+            "systemctl stop hangul-daemon.service 2>/dev/null || true; systemctl stop hangul-restore.service 2>/dev/null || true; rm -f /home/root/.hangul-restore-login.sh; if [ -f /home/root/.profile ]; then sed -i '\\|/home/root/.hangul-restore-login.sh|d' /home/root/.profile 2>/dev/null || true; fi",
           );
-          send("log", { line: "OK: 기존 서비스 중지 완료" });
+          send("log", { line: "OK: 기존 서비스 중지 및 로그인 restore 정리 완료" });
         } catch {
           // 서비스 미존재 시 무시
         }

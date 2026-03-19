@@ -17,7 +17,6 @@ KBDS_DST="/home/root/.kbds"
 LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
 LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"
 LIBEPAPER_BACKUP="$BASEDIR/backup/libepaper.so.original"
-LEGACY_LIBEPAPER_BACKUP="$BASEDIR/libepaper.so.original"
 BT_BACKUP="$BASEDIR/bt-pairing"
 BT_SRC="/var/lib/bluetooth"
 HOOK_DROPIN_DIR="/usr/lib/systemd/system/xochitl.service.d"
@@ -74,11 +73,6 @@ ensure_tmpfs_libepaper() {
     fi
     mount -o bind "$LIBEPAPER_TMPFS" "$LIBEPAPER"
 }
-
-if [ ! -f "$LIBEPAPER_BACKUP" ] && [ -f "$LEGACY_LIBEPAPER_BACKUP" ]; then
-    mkdir -p "$(dirname "$LIBEPAPER_BACKUP")"
-    cp "$LEGACY_LIBEPAPER_BACKUP" "$LIBEPAPER_BACKUP"
-fi
 
 echo "=========================================="
 echo " reMarkable Korean Input Installer v2.4"
@@ -151,7 +145,7 @@ if [ "$INSTALL_BT" = "1" ]; then
     systemctl stop xochitl 2>/dev/null || true
     systemctl stop hangul-daemon.service 2>/dev/null || true
     killall hangul-daemon 2>/dev/null || true
-    # Clean up any existing libepaper tmpfs mount left by an older install.
+    # Reset any existing libepaper tmpfs mount before reinstalling.
     unmount_libepaper_mounts
     rm -f "$LIBEPAPER_TMPFS"
     sleep 1
