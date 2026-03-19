@@ -4,14 +4,13 @@ import { spawn } from "child_process";
 interface VerifyRequest {
   ip: string;
   password: string;
-  keypad?: boolean;
   bt?: boolean;
 }
 
 interface CheckDefinition {
   name: string;
   command: string;
-  requires?: "keypad" | "bt";
+  requires?: "bt";
 }
 
 interface CheckResult {
@@ -22,33 +21,9 @@ interface CheckResult {
 
 const CHECKS: CheckDefinition[] = [
   {
-    name: "xochitl 바이너리 패치",
-    command:
-      "strings /usr/bin/xochitl | grep -q '/home/root/.kbds/' && echo OK || echo FAIL",
-    requires: "keypad",
-  },
-  {
-    name: "한글 로케일 (ko_KR)",
-    command:
-      "strings /usr/bin/xochitl | grep -q 'ko_KR' && echo OK || echo FAIL",
-    requires: "keypad",
-  },
-  {
     name: "한글 폰트",
     command:
       "test -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf && echo OK || echo FAIL",
-  },
-  {
-    name: "한글 키보드 레이아웃",
-    command:
-      "test -f /home/root/.kbds/ko_KR/keyboard_layout.json && echo OK || echo FAIL",
-    requires: "keypad",
-  },
-  {
-    name: "한글 조합 훅 (LD_PRELOAD)",
-    command:
-      "systemctl show xochitl -p Environment 2>/dev/null | grep -q 'hangul_hook' && echo OK || echo FAIL",
-    requires: "keypad",
   },
   {
     name: "BT 키보드 데몬",
@@ -103,7 +78,7 @@ async function waitForSsh(ip: string, password: string, maxAttempts = 6): Promis
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const body = (await request.json()) as VerifyRequest;
-  const { ip, password, keypad = true, bt = true } = body;
+  const { ip, password, bt = true } = body;
 
   if (!ip || !password || !/^[\d.]+$/.test(ip)) {
     return NextResponse.json(
@@ -121,7 +96,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const activeChecks = CHECKS.filter((check) => {
-    if (check.requires === "keypad" && !keypad) return false;
     if (check.requires === "bt" && !bt) return false;
     return true;
   });

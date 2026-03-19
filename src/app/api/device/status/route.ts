@@ -217,7 +217,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       },
       {
         id: "keypad-hook",
-        label: "온스크린 훅",
+        label: "기존 훅 설정",
         pass: !installKeypad || values.HOOK_ENV === "yes",
         detail: !installKeypad
           ? "비활성"
@@ -227,7 +227,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       },
       {
         id: "kbds",
-        label: "키보드 레이아웃",
+        label: "기존 키보드 파일",
         pass: !installKeypad || Number(values.KBDS_COUNT ?? "0") > 0,
         detail: !installKeypad
           ? "비활성"

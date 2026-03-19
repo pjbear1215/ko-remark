@@ -8,10 +8,7 @@ interface SetupState {
   password: string;
   connected: boolean;
   eulaAgreed: boolean;
-  installKeypad: boolean;
   installBtKeyboard: boolean;
-  selectedLocales: string[];
-  localesConfigured: boolean;
   btDeviceAddress: string;
   btDeviceName: string;
   detectedDevice: "paper-pro-move" | "paper-pro" | null;
@@ -76,10 +73,7 @@ const defaultState: SetupState = {
   password: "",
   connected: false,
   eulaAgreed: false,
-  installKeypad: false,
   installBtKeyboard: true,
-  selectedLocales: [],
-  localesConfigured: false,
   btDeviceAddress: "",
   btDeviceName: "",
   detectedDevice: null,

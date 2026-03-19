@@ -41,11 +41,8 @@ copy_dir "scripts" "scripts"
 
 # Keep only the source-based resources needed to rebuild/install locally.
 mkdir -p "$OUT_DIR/resources/source/hangul-daemon"
-mkdir -p "$OUT_DIR/resources/kbds/ko_KR"
 copy_file "resources/install.sh" "resources/install.sh"
 copy_file "resources/hangul-daemon.service" "resources/hangul-daemon.service"
-copy_file "resources/kbds/ko_KR/keyboard_layout.json" "resources/kbds/ko_KR/keyboard_layout.json"
-copy_file "resources/source/hangul_hook.c" "resources/source/hangul_hook.c"
 copy_file "resources/source/hangul-daemon/go.mod" "resources/source/hangul-daemon/go.mod"
 copy_file "resources/source/hangul-daemon/main.go" "resources/source/hangul-daemon/main.go"
 
@@ -56,11 +53,10 @@ Prepared GitHub bundle at:
 Included:
   - web app source and config
   - install/runtime scripts
-  - source files required to rebuild hook/daemon
+  - source files required to rebuild the daemon
 
 Excluded:
   - .next, node_modules
   - compiled .so / binaries
-  - extracted keyboard JSONs under resources/kbds (except bundled ko_KR)
   - bundled font binary
 MSG

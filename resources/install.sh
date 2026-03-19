@@ -1,6 +1,6 @@
 #!/bin/sh
-# reMarkable Korean (Hangul) Input - Complete Installer
-# Handles: on-screen keyboard hangul + BT keyboard hangul + font + persistence
+# reMarkable Korean (Hangul) Input Installer
+# Handles: Type Folio / BT keyboard hangul + font + persistence
 # Survives reboots (base filesystem writes) and firmware updates (files in /home)
 # Usage: bash /home/root/bt-keyboard/install.sh
 
@@ -95,11 +95,11 @@ if [ -f "$STATE_FILE" ]; then
     STATE_BT=${INSTALL_BT:-0}
     STATE_LOCALES=${KEYBOARD_LOCALES:-}
 fi
-INSTALL_KEYPAD=${INSTALL_KEYPAD:-$STATE_KEYPAD}
+INSTALL_KEYPAD=0
 INSTALL_BT=${INSTALL_BT:-$STATE_BT}
-KEYBOARD_LOCALES=${KEYBOARD_LOCALES:-$STATE_LOCALES}
+KEYBOARD_LOCALES=""
 printf 'INSTALL_KEYPAD=%s\nINSTALL_BT=%s\nKEYBOARD_LOCALES=%s\n' "$INSTALL_KEYPAD" "$INSTALL_BT" "$KEYBOARD_LOCALES" > "$STATE_FILE"
-echo "  Mode: keypad=$INSTALL_KEYPAD, bt=$INSTALL_BT"
+echo "  Mode: keypad=removed, bt=$INSTALL_BT"
 echo ""
 
 # 1. Prepare filesystem
@@ -107,55 +107,7 @@ echo "[1/10] Preparing filesystem..."
 mount -o remount,rw / 2>/dev/null || true
 echo "  OK: Active rootfs mounted rw"
 
-# 1.5. Patch xochitl binary (keyboard path + ko_KR locale) — keypad only
-if [ "$INSTALL_KEYPAD" = "1" ]; then
-    echo "[1.5/9] Patching xochitl binary..."
-    mkdir -p "$BASEDIR/backup"
-    if strings "$XOCHITL" | grep -q ':/misc/keyboards/'; then
-        # Backup original (first time only)
-        if [ ! -f "$XOCHITL_ORIGINAL" ]; then
-            cp "$XOCHITL" "$XOCHITL_ORIGINAL"
-            md5sum "$XOCHITL" | cut -d' ' -f1 > "$BASEDIR/backup/xochitl.original.md5"
-            echo "  OK: Original xochitl backed up"
-        fi
-        # Safety backup to rootfs (for factory-guard)
-        mkdir -p /opt/bt-keyboard
-        if [ ! -f /opt/bt-keyboard/xochitl.original ]; then
-            cp "$XOCHITL" /opt/bt-keyboard/xochitl.original
-            echo "  OK: Safety backup to /opt/bt-keyboard/"
-        fi
-        # Stop xochitl before patching
-        systemctl stop xochitl 2>/dev/null || true
-        # Patch 1: keyboard path :/misc/keyboards/ -> /home/root/.kbds/
-        OFFSET1=$(strings -t d "$XOCHITL" | grep ':/misc/keyboards/' | head -n1 | awk '{print $1}')
-        if [ -n "$OFFSET1" ]; then
-            printf '/home/root/.kbds/' | dd of="$XOCHITL" bs=1 seek="$OFFSET1" conv=notrunc 2>/dev/null
-            echo "  OK: Keyboard path patched (offset=$OFFSET1)"
-        else
-            echo "  WARN: Keyboard path offset not found"
-        fi
-        # Patch 2: locale no_SV -> ko_KR
-        OFFSET2=$(strings -t d "$XOCHITL" | grep 'no_SV' | head -n1 | awk '{print $1}')
-        if [ -n "$OFFSET2" ]; then
-            printf 'ko_KR' | dd of="$XOCHITL" bs=1 seek="$OFFSET2" conv=notrunc 2>/dev/null
-            echo "  OK: Locale patched no_SV -> ko_KR (offset=$OFFSET2)"
-        fi
-        # Patch 2b: Swedish -> Korean\0
-        SOFFSET=$(strings -t d "$XOCHITL" | grep 'Swedish' | head -n1 | awk '{print $1}')
-        if [ -n "$SOFFSET" ]; then
-            printf 'Korean\0' | dd of="$XOCHITL" bs=1 seek="$SOFFSET" conv=notrunc 2>/dev/null
-            echo "  OK: Display name patched Swedish -> Korean"
-        fi
-        # Save patched version
-        cp "$XOCHITL" "$XOCHITL_PATCHED"
-        md5sum "$XOCHITL" | cut -d' ' -f1 > "$BASEDIR/backup/xochitl.patched.md5"
-        echo "  OK: Patched xochitl saved for restore"
-    else
-        echo "  SKIP: xochitl already patched"
-    fi
-else
-    echo "[1.5/9] SKIP: xochitl patching (keypad not selected)"
-fi
+echo "[1.5/9] SKIP: on-screen keyboard support removed"
 
 # 2. btnxpuart module auto-load
 echo "[2/10] Setting up btnxpuart module..."
@@ -175,95 +127,9 @@ else
     echo "  SKIP: Font file not found ($FONT_SRC)"
 fi
 
-# 4. Keyboard layouts — keypad only
-if [ "$INSTALL_KEYPAD" = "1" ]; then
-    echo "[4/10] Installing keyboard layouts..."
-    # Backup existing .kbds if present
-    if [ -d "$KBDS_DST" ] && [ ! -d "$BASEDIR/backup/kbds_backup" ]; then
-        cp -r "$KBDS_DST" "$BASEDIR/backup/kbds_backup"
-        echo "  OK: Existing keyboard layouts backed up"
-    fi
-    if [ -d "$KBDS_SRC" ]; then
-        # Clean old .kbds to remove stale locales (e.g. en_GB)
-        if [ -d "$KBDS_DST" ]; then
-            rm -r "$KBDS_DST"
-            echo "  OK: Old .kbds cleared"
-        fi
-        KBD_COUNT=0
-        for locale_dir in "$KBDS_SRC"/*/; do
-            locale=$(basename "$locale_dir")
-            if [ -f "$KBDS_SRC/$locale/keyboard_layout.json" ]; then
-                mkdir -p "$KBDS_DST/$locale"
-                cp "$KBDS_SRC/$locale/keyboard_layout.json" "$KBDS_DST/$locale/keyboard_layout.json"
-                KBD_COUNT=$((KBD_COUNT+1))
-            fi
-        done
-        echo "  OK: $KBD_COUNT keyboard layouts installed to $KBDS_DST"
-    else
-        echo "  SKIP: Keyboard layouts not found ($KBDS_SRC)"
-    fi
-else
-    echo "[4/10] SKIP: keyboard layouts (keypad not selected)"
-fi
+echo "[4/10] SKIP: on-screen keyboard layouts removed"
 
-# 5. Hangul composition hook (LD_PRELOAD for on-screen keyboard) — keypad only
-if [ "$INSTALL_KEYPAD" = "1" ]; then
-    echo "[5/10] Installing hangul composition hook..."
-    if [ -f "$HOOK_SRC" ]; then
-        rm -f /etc/systemd/system/xochitl.service.d/override.conf /etc/systemd/system/xochitl.service.d/zz-hangul-hook.conf 2>/dev/null || true
-        rmdir /etc/systemd/system/xochitl.service.d 2>/dev/null || true
-        mkdir -p "$HOOK_DROPIN_DIR"
-        cat > "$HOOK_DROPIN" << 'OVERRIDE_EOF'
-[Service]
-Environment=LD_PRELOAD=/opt/bt-keyboard/hangul_hook.so
-OVERRIDE_EOF
-        echo "  OK: LD_PRELOAD drop-in installed"
-
-        # hangul_hook.so를 /opt (rootfs 직접, overlay 아님)에 복사 — 재부팅 후 보존
-        mkdir -p /opt/bt-keyboard
-        cp "$HOOK_SRC" /opt/bt-keyboard/hangul_hook.so
-        echo "  OK: hangul_hook.so -> /opt/bt-keyboard/ (rootfs)"
-    else
-        echo "  SKIP: hangul_hook.so not found ($HOOK_SRC)"
-    fi
-
-    # 키보드 설정을 ko_KR로 전환 ([General] 섹션 안에 삽입하여 중복 방지)
-    XOCHITL_CONF="/home/root/.config/remarkable/xochitl.conf"
-    if [ -f "$XOCHITL_CONF" ]; then
-        sed -i '/^Keyboard=/d' "$XOCHITL_CONF"
-        if grep -q '^\[General\]' "$XOCHITL_CONF"; then
-            sed -i '/^\[General\]/a\Keyboard=ko_KR' "$XOCHITL_CONF"
-        else
-            echo "Keyboard=ko_KR" >> "$XOCHITL_CONF"
-        fi
-        echo "  OK: 키보드 설정 ko_KR"
-    fi
-
-    # 펌웨어 업데이트 후 SSH 로그인 시 자동 복구용 .bashrc
-    cat > /home/root/.bashrc << 'BASHRC_EOF'
-# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구
-case "$-" in
-    *i*) ;;
-    *) return ;;
-esac
-
-if [ -f /home/root/bt-keyboard/install.sh ] && [ ! -f /opt/bt-keyboard/hangul_hook.so ]; then
-    echo ""
-    echo "========================================"
-    echo " 한글 입력 자동 복구 시작..."
-    echo " (펌웨어 업데이트 감지)"
-    echo "========================================"
-    echo ""
-    bash /home/root/bt-keyboard/install.sh
-    echo ""
-    echo " 자동 복구 완료! 다음 SSH 접속부터는 이 메시지가 나타나지 않습니다."
-    echo ""
-fi
-BASHRC_EOF
-    echo "  OK: .bashrc 자동 복구 설정"
-else
-    echo "[5/10] SKIP: hangul composition hook (keypad not selected)"
-fi
+echo "[5/10] SKIP: on-screen keyboard hook removed"
 
 # 6. Bluetooth pairing backup/restore
 echo "[6/10] Handling Bluetooth pairing..."

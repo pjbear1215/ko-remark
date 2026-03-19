@@ -11,11 +11,11 @@ export function deriveRuntimeState({
 export function getRuntimeStateLabel(runtimeState) {
   switch (runtimeState) {
     case "both":
-      return "온스크린 + 블루투스";
+      return "기존 설치 상태 + 블루투스";
     case "keypad_only":
-      return "온스크린만 설치됨";
+      return "기존 설치 상태 감지";
     case "bt_only":
-      return "블루투스만 설치됨";
+      return "Type Folio / 블루투스 입력 설치됨";
     default:
       return "원본 상태";
   }
@@ -48,7 +48,7 @@ export function getSafetyStatus({
     return {
       tone: "danger",
       label: "복구 차단 상태",
-      description: "온스크린 패치는 남아 있지만 원본 백업이 없어 추가 설치를 차단합니다.",
+      description: "기존 설치 상태가 남아 있지만 원본 백업이 없어 추가 설치를 차단합니다.",
     };
   }
 
@@ -58,14 +58,14 @@ export function getSafetyStatus({
       label: "보증 영향 낮음",
       description: runtimeState === "clean"
         ? "현재는 원본 상태입니다."
-        : "현재는 블루투스 경로만 설치되어 있습니다.",
+        : "현재는 Type Folio / 블루투스 입력 경로만 설치되어 있습니다.",
     };
   }
 
   return {
     tone: "caution",
-    label: "보증 영향 있음",
-    description: "온스크린 패치가 활성화되어 있으므로 원상복구와 백업 상태를 항상 확인해야 합니다.",
+    label: "정리 필요",
+    description: "기존 설치 상태가 남아 있어 원상복구를 권장합니다.",
   };
 }
 
@@ -106,33 +106,33 @@ export function getRecommendedAction({
     return {
       id: "safe-install",
       title: "안전 설치 시작",
-      description: "블루투스 한글 입력부터 설치하는 것을 권장합니다.",
-      href: "/install?mode=bt",
+      description: "Type Folio / 블루투스 키보드용 한글 입력 설치를 시작합니다.",
+      href: "/install",
     };
   }
 
   if (runtimeState === "bt_only") {
     return {
-      id: "advanced-install",
-      title: "고급 설치 계속",
-      description: "온스크린 키패드를 추가해 전체 기능을 완성합니다.",
-      href: "/install?mode=keypad&next=bluetooth",
+      id: "check-keyboard",
+      title: "키보드 연결 확인",
+      description: "현재 설치는 끝났습니다. Type Folio 또는 블루투스 키보드에서 입력을 확인하세요.",
+      href: "/bluetooth",
     };
   }
 
-  if (runtimeState === "keypad_only") {
+  if (runtimeState === "keypad_only" || runtimeState === "both") {
     return {
-      id: "add-bt",
-      title: "블루투스 추가",
-      description: "현재 온스크린은 설치되어 있습니다. BT 입력을 추가하면 전체 구성이 됩니다.",
-      href: "/install?mode=bt",
+      id: "remove-legacy",
+      title: "설치 상태 정리",
+      description: "원상복구 후 다시 설치하세요.",
+      href: "/uninstall",
     };
   }
 
   return {
-    id: "pair-bt",
-    title: "블루투스 페어링",
-    description: "현재 설치는 끝났습니다. 키보드 연결과 입력 확인으로 넘어가세요.",
+    id: "check-keyboard",
+    title: "키보드 연결 확인",
+    description: "현재 설치는 끝났습니다. Type Folio 또는 블루투스 키보드에서 입력을 확인하세요.",
     href: "/bluetooth",
   };
 }
@@ -167,7 +167,7 @@ export function buildFailureRoutines({
       steps: [
         "현재 상태에서는 추가 설치를 진행하지 않습니다.",
         "원상복구를 실행해 원본 경로(:/misc/keyboards/) 복귀 여부를 먼저 확인합니다.",
-        "원본 백업이 다시 확보된 뒤에만 온스크린 설치를 재시도합니다.",
+        "원본 백업이 다시 확보되기 전에는 현재 상태를 유지합니다.",
       ],
     });
   }
@@ -187,11 +187,10 @@ export function buildFailureRoutines({
   if (failingChecks.has("keypad-hook") || failingChecks.has("kbds")) {
     routines.push({
       id: "keypad-recovery",
-      title: "온스크린 복구 루틴",
+      title: "설치 상태 정리 루틴",
       steps: [
-        "원상복구 없이 추가 패치를 덮어쓰지 않습니다.",
         "현재 상태 카드에서 원본 백업 존재 여부를 확인합니다.",
-        "문제가 지속되면 전체삭제 후 온스크린만 다시 설치합니다.",
+        "문제가 지속되면 전체 원상복구를 실행합니다.",
       ],
     });
   }
@@ -211,16 +210,11 @@ export function buildFailureRoutines({
     routines.push({
       id: "default-check",
       title: "다음 확인 순서",
-      steps: runtimeState === "both"
-        ? [
-            "온스크린에서 한글 자모 조합을 확인합니다.",
-            "블루투스 키보드에서 한영 전환과 입력을 확인합니다.",
-            "필요하면 원상복구 전에 로그를 저장해둡니다.",
-          ]
-        : [
-            "권장 작업 카드를 따라 다음 단계로 진행합니다.",
-            "이상 징후가 있으면 원상복구보다 먼저 상태 카드를 다시 새로고침합니다.",
-          ],
+      steps: [
+        "권장 작업 카드를 따라 다음 단계로 진행합니다.",
+        "Type Folio 또는 블루투스 키보드에서 한영 전환과 입력을 확인합니다.",
+        "이상 징후가 있으면 원상복구보다 먼저 상태 카드를 다시 새로고침합니다.",
+      ],
     });
   }
 

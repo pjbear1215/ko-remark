@@ -32,7 +32,6 @@ export default function CompletePage() {
   const fontInputRef = useRef<HTMLInputElement>(null);
 
   const placeholderChecks = [
-    ...(state.installKeypad ? ["xochitl 패치", "키보드 레이아웃", "조합 훅"] : []),
     "한글 폰트",
     ...(state.installBtKeyboard ? ["BT 데몬", "블루투스"] : []),
   ];
@@ -47,7 +46,6 @@ export default function CompletePage() {
           body: JSON.stringify({
             ip: state.ip,
             password: state.password,
-            keypad: state.installKeypad,
             bt: state.installBtKeyboard,
           }),
         });
@@ -64,7 +62,7 @@ export default function CompletePage() {
       }
     };
     verify();
-  }, [allowed, state.installBtKeyboard, state.installKeypad, state.ip, state.password]);
+  }, [allowed, state.installBtKeyboard, state.ip, state.password]);
 
   const handleBtPower = useCallback(
     async (action: "on" | "off") => {

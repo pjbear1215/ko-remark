@@ -4,14 +4,12 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
-import Radio from "@/components/Radio";
 import ProgressBar from "@/components/ProgressBar";
 import TerminalOutput from "@/components/TerminalOutput";
 import ErrorReport from "@/components/ErrorReport";
 import { useSetup } from "@/lib/store";
 import { useGuard } from "@/lib/useGuard";
 import { ensureSshSession } from "@/lib/client/sshSession";
-import { needsKeyboardSelection } from "@/lib/keyboardSelectionState.js";
 
 type InstallStatus = "ready" | "installing" | "complete" | "error";
 
@@ -19,10 +17,6 @@ export default function InstallPage() {
   const allowed = useGuard();
   const router = useRouter();
   const { state, setState } = useSetup();
-  const [installMode, setInstallMode] = useState<"bt" | "keypad">(
-    state.installKeypad ? "keypad" : "bt"
-  );
-  const [warrantyAgreed, setWarrantyAgreed] = useState(false);
   const [status, setStatus] = useState<InstallStatus>("ready");
   const [logs, setLogs] = useState<string[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
@@ -32,10 +26,6 @@ export default function InstallPage() {
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const statusRef = useRef<InstallStatus>("ready");
-  const shouldChooseKeyboards = needsKeyboardSelection({
-    installMode,
-    localesConfigured: state.localesConfigured,
-  });
 
   useEffect(() => {
     statusRef.current = status;
@@ -59,39 +49,16 @@ export default function InstallPage() {
       return;
     }
 
-    const installKeypad = installMode === "keypad";
-    const installBt = installMode === "bt";
-    const locales = state.selectedLocales.length > 0
-      ? state.selectedLocales.join(",")
-      : "all";
-    setState({ installKeypad, installBtKeyboard: installBt });
+    setState({ installBtKeyboard: true });
     setStatus("installing");
     setLogs([]);
     setErrors([]);
     setProgress(0);
 
-    const params = new URLSearchParams({
-      keypad: String(installKeypad),
-      bt: String(installBt),
-      locales,
-    });
+    const params = new URLSearchParams({ bt: "true" });
 
     try {
       await ensureSshSession(state.ip, state.password);
-
-      // 키보드 추출 (설치 전 캐시 준비)
-      if (installMode === "keypad") {
-        setCurrentStep("키보드 레이아웃 추출 중...");
-        const extractRes = await fetch("/api/keyboards/extract");
-        if (!extractRes.ok) {
-          const extractData = await extractRes.json();
-          setStatus("error");
-          setLogs([`ERROR: 키보드 추출 실패 — ${extractData.error ?? "알 수 없는 오류"}`]);
-          setErrors([`키보드 추출 실패: ${extractData.error ?? "알 수 없는 오류"}`]);
-          return;
-        }
-        setLogs((prev) => [...prev, "OK: 키보드 레이아웃 추출 완료"]);
-      }
 
       const checkRes = await fetch(`/api/ssh/test`, {
         method: "POST",
@@ -171,11 +138,7 @@ export default function InstallPage() {
   };
 
   const handleNext = () => {
-    if (installMode === "bt") {
-      router.push("/bluetooth");
-    } else {
-      router.push("/complete");
-    }
+    router.push("/bluetooth");
   };
 
   return (
@@ -194,123 +157,26 @@ export default function InstallPage() {
             className="mt-3 text-[17px]"
             style={{ color: "var(--text-muted)" }}
           >
-            설치할 항목을 선택하세요.
+            Type Folio와 블루투스 키보드용 한글 입력을 설치합니다.
           </p>
         </div>
 
-        {/* 설치 모드 선택 */}
         {status === "ready" && (
           <div className="space-y-3 stagger-1">
-            {/* 블루투스 키보드 (안전) */}
-            <Radio
-              checked={installMode === "bt"}
-              onChange={() => { setInstallMode("bt"); setWarrantyAgreed(false); }}
-              label="블루투스 한글 키보드"
-              description="외부 블루투스 키보드로 한글 입력. 시스템 파일을 변경하지 않습니다."
+            <div
+              className="p-5 rounded-xl"
+              style={{
+                backgroundColor: "var(--bg-secondary)",
+                border: "1px solid var(--border-light)",
+              }}
             >
-              <span
-                className="inline-block mt-2 text-[12px] px-2 py-0.5 rounded-full font-medium"
-                style={{ backgroundColor: "var(--success-light, rgba(0,200,0,0.1))", color: "var(--success)", borderRadius: "9999px" }}
-              >
-                제조사 보증 영향 낮음 / Lower warranty risk
-              </span>
-            </Radio>
-
-            {/* 온스크린 키패드 (보증 소멸) */}
-            <Radio
-              checked={installMode === "keypad"}
-              onChange={() => setInstallMode("keypad")}
-              label="한글 온스크린 키패드"
-              description="터치스크린 한글 키보드 추가. 시스템 바이너리(xochitl)를 수정합니다."
-            >
-              <span
-                className="inline-block mt-2 text-[12px] px-2 py-0.5 rounded-full font-medium"
-                style={{ backgroundColor: "var(--error-light, rgba(255,0,0,0.1))", color: "var(--error)", borderRadius: "9999px" }}
-              >
-                제조사 보증 영향 큼 / Higher warranty risk
-              </span>
-            </Radio>
-
-            {/* 온스크린 키패드 선택 시 보증 경고 */}
-            {installMode === "keypad" && (
-              <div className="space-y-4">
-                <div
-                  className="p-5 rounded-xl"
-                  style={{
-                    backgroundColor: "var(--bg-secondary)",
-                    border: "1px solid var(--border-light)",
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>
-                        키보드 레이아웃
-                      </p>
-                      <p className="text-[13px] mt-1" style={{ color: "var(--text-muted)" }}>
-                        {state.localesConfigured
-                          ? `${state.selectedLocales.length}개 레이아웃 선택됨`
-                          : "설치할 언어 키보드를 먼저 선택하세요"}
-                      </p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => router.push("/keyboards")}
-                    >
-                      {state.localesConfigured ? "다시 선택" : "선택"}
-                    </Button>
-                  </div>
-                </div>
-
-                <div
-                  className="p-5 rounded-xl"
-                  style={{
-                    backgroundColor: "var(--error-light, rgba(255,59,48,0.06))",
-                    border: `1px solid ${warrantyAgreed ? "var(--success)" : "var(--error)"}`,
-                  }}
-                >
-                  <p className="text-[15px] font-medium" style={{ color: "var(--error)" }}>
-                    제조사 보증 및 지원에 영향을 줄 수 있습니다
-                  </p>
-                  <ul className="text-[13px] mt-2 space-y-1" style={{ color: "var(--text-muted)" }}>
-                    <li>- 시스템 바이너리(xochitl)가 수정되어 EULA를 위반합니다</li>
-                    <li>- 펌웨어 업데이트 시 자동 복구되지만, 예기치 않은 문제가 발생할 수 있습니다</li>
-                    <li>- 팩토리 리셋 시 자동으로 원본 복원됩니다</li>
-                    <li>- 롤백(원상복구)으로 언제든 원본으로 되돌릴 수 있습니다</li>
-                  </ul>
-                  <p className="text-[12px] mt-3" style={{ color: "var(--border)" }}>
-                    English: This option modifies the system binary on your device. You are solely responsible for any warranty, support, or recovery consequences.
-                  </p>
-                  <label className="flex items-center gap-3 mt-4 cursor-pointer">
-                    <div
-                      className="flex items-center justify-center flex-shrink-0 transition-colors"
-                      style={{
-                        width: "22px",
-                        height: "22px",
-                        backgroundColor: warrantyAgreed ? "var(--accent)" : "transparent",
-                        border: warrantyAgreed ? "none" : "2px solid var(--border)",
-                        borderRadius: "6px",
-                      }}
-                    >
-                      {warrantyAgreed && (
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      )}
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={warrantyAgreed}
-                      onChange={(e) => setWarrantyAgreed(e.target.checked)}
-                      className="sr-only"
-                    />
-                    <span className="text-[14px] font-medium" style={{ color: warrantyAgreed ? "var(--success)" : "var(--error)" }}>
-                      위 내용을 이해했으며, 제 기기에 적용되는 변경의 책임이 본인에게 있음을 확인합니다. / I understand and accept full responsibility for changes made to my device.
-                    </span>
-                  </label>
-                </div>
-              </div>
-            )}
+              <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>
+                설치 구성
+              </p>
+              <p className="text-[13px] mt-1" style={{ color: "var(--text-muted)" }}>
+                Type Folio 및 블루투스 키보드용 한글 입력을 설치합니다.
+              </p>
+            </div>
 
             {/* 설치 전 확인 사항 */}
             <div className="space-y-3 mt-6 stagger-2">
@@ -499,15 +365,11 @@ export default function InstallPage() {
           </Button>
           {status === "ready" ? (
             <Button
-              onClick={shouldChooseKeyboards ? () => router.push("/keyboards") : startInstall}
-              disabled={shouldChooseKeyboards
-                ? false
-                : !developerModeEnabled ||
-                  !lockPasswordDisabled ||
-                  (installMode === "keypad" && !warrantyAgreed)}
+              onClick={startInstall}
+              disabled={!developerModeEnabled || !lockPasswordDisabled}
               size="lg"
             >
-              {shouldChooseKeyboards ? "키보드 선택" : "설치 시작"}
+              설치 시작
             </Button>
           ) : (
             <Button onClick={handleNext} disabled={status !== "complete"} size="lg">

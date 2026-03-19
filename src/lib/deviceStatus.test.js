@@ -36,7 +36,7 @@ test("getRecommendedAction points clean devices to the safe install flow", () =>
   });
 
   assert.equal(action.id, "safe-install");
-  assert.equal(action.href, "/install?mode=bt");
+  assert.equal(action.href, "/install");
 });
 
 test("buildFailureRoutines returns BT guidance when BT checks fail", () => {

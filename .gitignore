@@ -44,14 +44,10 @@ next-env.d.ts
 resources/hangul-compose-hook/hangul_hook.so
 resources/hangul-daemon/hangul-daemon
 resources/fonts/NotoSansCJKkr-Regular.otf
-resources/kbds/
 dist/bncedgb-glitch/
 
 # Development artifacts
 resources/source/*.so
-resources/source/hangul_hook_*.c
-resources/source/hangul_hook_diag.c
-!resources/source/hangul_hook.c
 
 # Default Next.js assets (unused)
 public/vercel.svg

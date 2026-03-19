@@ -180,9 +180,9 @@ export default function UninstallPage() {
             {detected && (
               <div className="mt-3 text-[14px] text-center" style={{ color: "var(--text-muted)" }}>
                 {detected.keypad && detected.bt
-                  ? "온스크린 키패드 + 블루투스 키보드 모두 복구됨"
+                  ? "기존 설치 상태와 블루투스 구성이 모두 정리됨"
                   : detected.keypad
-                  ? "온스크린 키패드 복구됨 (xochitl 원본 복원)"
+                  ? "기존 설치 상태가 정리됨"
                   : detected.bt
                   ? "블루투스 키보드 복구됨"
                   : "설치된 항목 없음"}

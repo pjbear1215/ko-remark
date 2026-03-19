@@ -7,12 +7,9 @@ import { getSshSessionFromRequest } from "@/lib/server/sshSession";
 import {
   XOCHITL_DROPIN_DIR,
   XOCHITL_HOOK_DROPIN,
-  mergeInstallState,
   renderInstallState,
 } from "@/lib/installState.js";
 import { shouldRebuildArtifact } from "@/lib/buildArtifacts.js";
-import { filterSelectableLocales } from "@/lib/keyboardLocales.js";
-import { shouldAbortPatchedInstall } from "@/lib/reversibility.js";
 
 interface FileMapping {
   local: string;
@@ -28,49 +25,6 @@ interface InstallState {
 interface DetectedInstallState extends InstallState {
   hasHomeBackup: boolean;
   hasOptBackup: boolean;
-}
-
-// 키보드 레이아웃: resources/kbds/에 전체 포함, 추출 캐시는 보조
-const KEYBOARD_CACHE_DIR = path.join(os.tmpdir(), "ko-remark-keyboards");
-
-// 빌드 결과물 (키보드 파일은 동적으로 결정)
-const FILES_KEYPAD_BASE: FileMapping[] = [
-  { local: "hangul-compose-hook/hangul_hook.so", remote: "hangul_hook.so" },
-];
-
-function getAllAvailableLocales(): string[] {
-  const locales = new Set<string>();
-  // 리포지토리 kbds/ 디렉토리 스캔
-  const repoKbds = path.join(process.cwd(), "resources", "kbds");
-  try {
-    for (const d of fs.readdirSync(repoKbds, { withFileTypes: true })) {
-      if (d.isDirectory() && fs.existsSync(path.join(repoKbds, d.name, "keyboard_layout.json"))) {
-        locales.add(d.name);
-      }
-    }
-  } catch { /* resources/kbds/ 없으면 무시 */ }
-  // tmpdir 캐시 스캔 (추출된 키보드)
-  try {
-    for (const f of fs.readdirSync(KEYBOARD_CACHE_DIR)) {
-      if (f.endsWith(".json")) locales.add(f.replace(".json", ""));
-    }
-  } catch { /* 캐시 없으면 무시 */ }
-  return filterSelectableLocales([...locales]);
-}
-
-function buildKeyboardFiles(locales: string[], projectDir: string): FileMapping[] {
-  const files: FileMapping[] = [];
-  for (const locale of locales) {
-    const repoPath = path.join(projectDir, `kbds/${locale}/keyboard_layout.json`);
-    const cachePath = path.join(KEYBOARD_CACHE_DIR, `${locale}.json`);
-
-    if (fs.existsSync(repoPath)) {
-      files.push({ local: `kbds/${locale}/keyboard_layout.json`, remote: `kbds/${locale}/keyboard_layout.json` });
-    } else if (fs.existsSync(cachePath)) {
-      files.push({ local: cachePath, remote: `kbds/${locale}/keyboard_layout.json` });
-    }
-  }
-  return files;
 }
 
 const FILES_BT: FileMapping[] = [
@@ -221,68 +175,6 @@ async function runScp(
   }
 }
 
-function runScpFromOnce(
-  ip: string,
-  password: string,
-  remotePath: string,
-  localPath: string,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const env = { ...process.env, SSHPASS: password, PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin` };
-    const proc = spawn(
-      "sshpass",
-      [
-        "-e",
-        "scp",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        `root@${ip}:${remotePath}`,
-        localPath,
-      ],
-      { env },
-    );
-
-    let stderr = "";
-    proc.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-    proc.on("close", (code) => {
-      if (code === 0) resolve();
-      else {
-        const errorLines = stderr
-          .split("\n")
-          .filter((l) => !l.includes("Warning: Permanently added") && l.trim())
-          .join("\n");
-        reject(new Error(errorLines || `SCP failed with code ${code}`));
-      }
-    });
-    proc.on("error", reject);
-  });
-}
-
-async function runScpFrom(
-  ip: string,
-  password: string,
-  remotePath: string,
-  localPath: string,
-  retries = 3,
-): Promise<void> {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      if (attempt > 0) {
-        await new Promise((r) => setTimeout(r, 2000 * attempt));
-      }
-      return await runScpFromOnce(ip, password, remotePath, localPath);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (attempt < retries - 1 && msg.includes("Permission denied")) {
-        continue;
-      }
-      throw err;
-    }
-  }
-}
-
 async function detectInstalledState(
   ip: string,
   password: string,
@@ -326,89 +218,6 @@ async function detectInstalledState(
   };
 }
 
-// xochitl 바이너리 패치: 키보드 경로 + 한국어 로케일 추가
-// @MX:WARN: 바이너리 패치 - 패턴 미발견 시 에러 발생
-// @MX:REASON: xochitl 바이너리를 직접 수정하여 한국어 키보드 지원 활성화
-async function patchXochitl(
-  ip: string,
-  password: string,
-  send: (event: string, data: Record<string, unknown>) => void,
-): Promise<void> {
-  // 패치 필요 여부 확인
-  const checkResult = await runSsh(ip, password,
-    "strings /usr/bin/xochitl | grep -q ':/misc/keyboards/' && echo FOUND || echo PATCHED");
-  if (checkResult.trim() === "PATCHED") {
-    send("log", { line: "OK: xochitl 이미 패치됨 (스킵)" });
-    return;
-  }
-
-  // 원본 백업 (최초 1회) — 사용자 데이터 + 시스템 파티션 양쪽
-  await runSsh(ip, password, `
-    mount -o remount,rw / 2>/dev/null || true
-    mkdir -p /home/root/bt-keyboard/backup /opt/bt-keyboard
-    if [ ! -f /home/root/bt-keyboard/backup/xochitl.original ]; then
-      cp /usr/bin/xochitl /home/root/bt-keyboard/backup/xochitl.original
-      md5sum /usr/bin/xochitl | cut -d' ' -f1 > /home/root/bt-keyboard/backup/xochitl.original.md5
-    fi
-    if [ ! -f /opt/bt-keyboard/xochitl.original ]; then
-      cp /usr/bin/xochitl /opt/bt-keyboard/xochitl.original
-    fi
-  `);
-  send("log", { line: "OK: xochitl 원본 백업 (사용자 + 시스템)" });
-
-  // 디바이스에서 xochitl 다운로드
-  send("log", { line: "xochitl 다운로드 중 (21MB)..." });
-  const tmpDir = path.join(os.tmpdir(), "ko-remark-install");
-  fs.mkdirSync(tmpDir, { recursive: true });
-  const localXochitl = path.join(tmpDir, "xochitl");
-  await runScpFrom(ip, password, "/usr/bin/xochitl", localXochitl);
-
-  // Node.js Buffer로 패치
-  const buf = Buffer.from(fs.readFileSync(localXochitl));
-
-  // 패치 1: 키보드 경로 (18바이트)
-  const oldPath = Buffer.from(":/misc/keyboards/");
-  const newPath = Buffer.from("/home/root/.kbds/");
-  const pathIdx = buf.indexOf(oldPath);
-  if (pathIdx === -1) {
-    // 이미 패치된 바이너리 — 스킵
-    fs.unlinkSync(localXochitl);
-    send("log", { line: "OK: xochitl 이미 패치됨 (스킵)" });
-    return;
-  }
-  newPath.copy(buf, pathIdx);
-
-  // 패치 2: 로케일 (no_SV/Swedish → ko_KR/Korean, 15바이트)
-  const oldLocale = Buffer.from("no_SV\x00\x00\x00Swedish");
-  const newLocale = Buffer.from("ko_KR\x00\x00\x00Korean\x00");
-  const localeIdx = buf.indexOf(oldLocale);
-  if (localeIdx === -1) {
-    // 로케일만 이미 패치됨 — 경로 패치만 적용
-    send("log", { line: "WARN: 로케일 이미 패치됨, 경로 패치만 적용" });
-  } else {
-    newLocale.copy(buf, localeIdx);
-  }
-
-  fs.writeFileSync(localXochitl, buf);
-  send("log", { line: "OK: 바이너리 패치 완료 (24바이트)" });
-
-  // 패치된 바이너리 업로드
-  send("log", { line: "패치된 xochitl 업로드 중..." });
-  await runSsh(ip, password, "systemctl stop xochitl");
-  await runScp(ip, password, localXochitl, "/usr/bin/xochitl");
-  await runSsh(ip, password, "chmod 755 /usr/bin/xochitl");
-
-  // 패치 버전도 백업 (restore.sh에서 사용)
-  await runSsh(ip, password, `
-    cp /usr/bin/xochitl /home/root/bt-keyboard/backup/xochitl.patched
-    md5sum /usr/bin/xochitl | cut -d' ' -f1 > /home/root/bt-keyboard/backup/xochitl.patched.md5
-  `);
-
-  // 로컬 임시파일 정리
-  fs.unlinkSync(localXochitl);
-  send("log", { line: "OK: xochitl 패치 및 백업 완료" });
-}
-
 async function verifyInstalledRuntime(
   ip: string,
   password: string,
@@ -420,12 +229,6 @@ async function verifyInstalledRuntime(
   }
   if (currentState.installBt !== expectedState.installBt) {
     return false;
-  }
-  if (expectedState.installKeypad) {
-    const env = await runSsh(ip, password, "systemctl show xochitl -p Environment");
-    if (!env.includes("LD_PRELOAD=/opt/bt-keyboard/hangul_hook.so")) {
-      return false;
-    }
   }
   if (expectedState.installBt) {
     const daemonState = await runSsh(ip, password, "systemctl is-active hangul-daemon 2>/dev/null || true");
@@ -448,31 +251,6 @@ function runLocal(command: string, cwd?: string, timeout = 120000): Promise<stri
       }
     });
   });
-}
-
-async function buildHangulHook(
-  resourceDir: string,
-  send: (event: string, data: Record<string, unknown>) => void,
-): Promise<void> {
-  const outputPath = path.join(resourceDir, "hangul-compose-hook/hangul_hook.so");
-  const sourcePath = path.join(resourceDir, "source/hangul_hook.c");
-
-  if (!shouldRebuildArtifact(outputPath, [sourcePath])) {
-    send("log", { line: "OK: hangul_hook.so (이미 빌드됨)" });
-    return;
-  }
-
-  if (!fs.existsSync(sourcePath)) {
-    throw new Error(`소스 파일 없음: ${sourcePath}`);
-  }
-
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-
-  send("log", { line: "zig cc로 hangul_hook.so 크로스 컴파일 중..." });
-  await runLocal(
-    `zig cc -target aarch64-linux-musl -shared -fPIC -O2 -nostdlib -o "${outputPath}" "${sourcePath}"`,
-  );
-  send("log", { line: "OK: hangul_hook.so 빌드 완료" });
 }
 
 async function buildHangulDaemon(
@@ -562,6 +340,7 @@ INSTALL_BT=0
 if [ -f "$STATE_FILE" ]; then
     . "$STATE_FILE"
 fi
+INSTALL_KEYPAD=0
 STATE_FILE="$BASEDIR/install-state.conf"
 FONT_SRC="$BASEDIR/fonts/NotoSansCJKkr-Regular.otf"
 FONT_DST="/usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf"
@@ -589,6 +368,7 @@ INSTALL_BT=0
 if [ -f "$STATE_FILE" ]; then
     . "$STATE_FILE"
 fi
+INSTALL_KEYPAD=0
 
 if [ ! -f "$LIBEPAPER_BACKUP" ] && [ -f "$LEGACY_LIBEPAPER_BACKUP" ]; then
     mkdir -p "$(dirname "$LIBEPAPER_BACKUP")"
@@ -1307,13 +1087,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = request.nextUrl;
   const installKeypad = searchParams.get("keypad") === "true";
   const installBt = searchParams.get("bt") !== "false";
-  const localesParam = searchParams.get("locales") ?? "all";
   const session = getSshSessionFromRequest(request);
-  const requestedLocales = installKeypad
-    ? (localesParam === "all"
-      ? getAllAvailableLocales()
-      : filterSelectableLocales(localesParam.split(",").filter(Boolean)))
-    : [];
 
   if (!session) {
     return new Response("Missing SSH session", { status: 401 });
@@ -1321,12 +1095,12 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const { ip, password } = session;
 
-  if (installKeypad && installBt) {
-    return new Response("keypad와 bt를 동시에 설치할 수 없습니다. 하나만 선택하세요.", { status: 400 });
+  if (installKeypad) {
+    return new Response("현재는 Type Folio/BT 입력만 설치할 수 있습니다.", { status: 400 });
   }
 
-  if (!installKeypad && !installBt) {
-    return new Response("설치할 항목을 선택하세요.", { status: 400 });
+  if (!installBt) {
+    return new Response("현재는 Type Folio/BT 입력 설치만 지원합니다.", { status: 400 });
   }
 
   const projectDir = path.join(process.cwd(), "resources");
@@ -1342,25 +1116,23 @@ export async function GET(request: NextRequest): Promise<Response> {
 
       try {
         const requestedState: InstallState = {
-          installKeypad,
+          installKeypad: false,
           installBt,
-          locales: requestedLocales,
+          locales: [],
         };
         const currentState = await detectInstalledState(ip, password);
-        const effectiveState = mergeInstallState(currentState, requestedState);
+        const effectiveState: InstallState = {
+          installKeypad: false,
+          installBt: true,
+          locales: [],
+        };
 
         send("log", {
           line: `STATE: current keypad=${currentState.installKeypad ? 1 : 0}, bt=${currentState.installBt ? 1 : 0}, locales=${currentState.locales.join(",") || "-"}, homeBackup=${currentState.hasHomeBackup ? 1 : 0}, optBackup=${currentState.hasOptBackup ? 1 : 0}; requested keypad=${requestedState.installKeypad ? 1 : 0}, bt=${requestedState.installBt ? 1 : 0}, locales=${requestedState.locales.join(",") || "-"}; effective keypad=${effectiveState.installKeypad ? 1 : 0}, bt=${effectiveState.installBt ? 1 : 0}, locales=${effectiveState.locales.join(",") || "-"}`,
         });
 
-        if (shouldAbortPatchedInstall({
-          keypadPatched: currentState.installKeypad,
-          hasHomeBackup: currentState.hasHomeBackup,
-          hasOptBackup: currentState.hasOptBackup,
-        })) {
-          throw new Error(
-            "xochitl is already patched but no trusted original backup exists in /home/root/bt-keyboard/backup or /opt/bt-keyboard; refusing to continue",
-          );
+        if (currentState.installKeypad) {
+          throw new Error("기존 설치 상태가 감지되었습니다. 전체 원상복구 후 다시 설치해주세요.");
         }
 
         // === Step 0: 소스에서 바이너리 빌드 ===
@@ -1370,14 +1142,9 @@ export async function GET(request: NextRequest): Promise<Response> {
         await downloadFont(projectDir, send);
         send("progress", { percent: 8, step: 0 });
 
-        if (effectiveState.installKeypad) {
-          await buildHangulHook(projectDir, send);
-          send("progress", { percent: 16, step: 0 });
-        }
-
         if (effectiveState.installBt) {
           await buildHangulDaemon(projectDir, send);
-          send("progress", { percent: 22, step: 0 });
+          send("progress", { percent: 20, step: 0 });
         }
 
         send("step", { step: 0, name: "소스에서 바이너리 빌드 완료", status: "complete" });
@@ -1386,16 +1153,9 @@ export async function GET(request: NextRequest): Promise<Response> {
         send("step", { step: 1, name: "원격 디렉토리 생성 및 백업", status: "running" });
         send("progress", { percent: 25, step: 1 });
 
-        // Clean stale keyboard source to prevent old locales (e.g. en_GB) from persisting
-        // Only clean kbds when keypad is being installed; BT-only must not touch existing kbds
-        if (requestedState.installKeypad) {
-          await runSsh(ip, password, "rm -r /home/root/bt-keyboard/kbds; rm -r /home/root/.kbds; true");
-        }
-
         const mkdirPaths = [
           "/home/root/bt-keyboard/fonts",
           "/home/root/bt-keyboard/backup",
-          ...effectiveState.locales.map((l) => `/home/root/bt-keyboard/kbds/${l}`),
         ];
         await runSsh(ip, password, `mkdir -p ${mkdirPaths.join(" ")}`);
         await runSsh(
@@ -1411,12 +1171,6 @@ export async function GET(request: NextRequest): Promise<Response> {
           LEGACY_LIBEPAPER_BACKUP="/home/root/bt-keyboard/libepaper.so.original"
           if [ -f "/usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf" ] && [ ! -f "$BACKUP_DIR/font_existed" ]; then
             touch "$BACKUP_DIR/font_existed"
-          fi
-          if [ -d "/home/root/.kbds" ] && [ ! -d "$BACKUP_DIR/kbds_backup" ]; then
-            cp -r "/home/root/.kbds" "$BACKUP_DIR/kbds_backup"
-          fi
-          if [ -f "${XOCHITL_HOOK_DROPIN}" ] && [ ! -f "$BACKUP_DIR/xochitl_override.conf.orig" ]; then
-            cp "${XOCHITL_HOOK_DROPIN}" "$BACKUP_DIR/xochitl_override.conf.orig"
           fi
           if [ ! -f "$LIBEPAPER_BACKUP" ] && [ -f "$LEGACY_LIBEPAPER_BACKUP" ]; then
             cp "$LEGACY_LIBEPAPER_BACKUP" "$LIBEPAPER_BACKUP"
@@ -1445,21 +1199,9 @@ export async function GET(request: NextRequest): Promise<Response> {
           // 서비스 미존재 시 무시
         }
 
-        // === Step 1.7: xochitl 바이너리 패치 (keypad 선택 시만) ===
-        if (requestedState.installKeypad) {
-          send("step", { step: 1, name: "xochitl 바이너리 패치", status: "running" });
-          send("progress", { percent: 28, step: 1 });
-          await patchXochitl(ip, password, send);
-          send("step", { step: 1, name: "xochitl 바이너리 패치 완료", status: "complete" });
-        }
-
         // === Step 2: 파일 업로드 ===
-        const keypadFiles = effectiveState.installKeypad
-          ? [...FILES_KEYPAD_BASE, ...buildKeyboardFiles(effectiveState.locales, projectDir)]
-          : [];
         const filesToUpload: FileMapping[] = [
           ...FILES_COMMON,
-          ...keypadFiles,
           ...(effectiveState.installBt ? FILES_BT : []),
         ];
 
@@ -1552,8 +1294,8 @@ export async function GET(request: NextRequest): Promise<Response> {
         send("step", { step: 4, name: "설치 스크립트 실행 완료", status: "complete" });
         send("progress", { percent: 80, step: 4 });
 
-        // === Step 5: 자동 복구 서비스 설치 (keypad 설치 시 — 펌웨어 업데이트 대응) ===
-        if (effectiveState.installKeypad || effectiveState.installBt) {
+        // === Step 5: 자동 복구 서비스 설치 ===
+        if (effectiveState.installBt) {
           send("step", { step: 5, name: "부팅 시 자동 복구 서비스 설치", status: "running" });
           send("progress", { percent: 85, step: 5 });
 

@@ -43,7 +43,7 @@ export default function DiagnosePage(): React.JSX.Element {
             className="mt-3 text-[17px]"
             style={{ color: "var(--text-muted)" }}
           >
-            온스크린 키보드 문제를 진단합니다.
+            Type Folio 및 블루투스 키보드 입력 문제를 진단합니다.
           </p>
         </div>
 

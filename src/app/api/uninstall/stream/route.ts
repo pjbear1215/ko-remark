@@ -201,7 +201,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         });
 
         if (detected.keypadInstalled) {
-          send("log", { line: "감지: 한글 온스크린 키패드 설치됨 (xochitl 패치)" });
+      send("log", { line: "감지: 기존 설치 상태 확인됨" });
         }
         if (detected.btInstalled) {
           send("log", { line: "감지: 블루투스 한글 키보드 설치됨" });

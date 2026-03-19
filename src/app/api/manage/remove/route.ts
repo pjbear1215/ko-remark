@@ -135,7 +135,7 @@ async function removeBt(ip: string, password: string, otherStillInstalled: boole
   `);
   logs.push("OK: 비활성 파티션 BT 흔적 제거");
 
-  // 온스크린도 없으면 공통 파일도 정리
+  // 다른 설치 상태도 없으면 공통 파일도 정리
   if (!otherStillInstalled) {
     await cleanupCommon(ip, password, logs);
   }
@@ -297,7 +297,7 @@ async function removeOnscreen(ip: string, password: string, otherStillInstalled:
       umount /mnt/inactive 2>/dev/null || true
     fi
   `);
-  logs.push("OK: 비활성 파티션 온스크린 흔적 제거");
+  logs.push("OK: 비활성 파티션 기존 설치 상태 정리");
 
   // 6. BT도 없으면 공통 파일도 정리
   if (!otherStillInstalled) {
@@ -376,7 +376,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     if (target === "onscreen" && !detected.keypad) {
-      return NextResponse.json({ success: false, error: "온스크린 한글 키패드가 설치되어 있지 않습니다" });
+    return NextResponse.json({ success: false, error: "해당 설치 항목이 감지되지 않습니다" });
     }
 
     const otherStillInstalled = target === "bt" ? detected.keypad : detected.bt;

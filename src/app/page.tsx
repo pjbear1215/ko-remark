@@ -66,7 +66,7 @@ export default function WelcomePage() {
               className="mt-3 text-[17px]"
               style={{ color: "var(--text-muted)" }}
             >
-              USB 연결을 확인한 뒤, 다음 단계에서 설치 항목을 선택합니다.
+              USB 연결을 확인한 뒤, Type Folio와 블루투스 키보드용 한글 입력 설치를 진행합니다.
             </p>
           </div>
           <Button
@@ -191,7 +191,7 @@ export default function WelcomePage() {
                 <ul className="mt-2 space-y-1 text-[13px]" style={{ color: "var(--text-muted)" }}>
                   <li>- USB 케이블이 연결되어 있어야 합니다.</li>
                   <li>- 기기에서 개발자 모드와 SSH가 켜져 있어야 합니다.</li>
-                  <li>- 연결 확인이 끝나면 다음 단계에서 설치 항목을 고를 수 있습니다.</li>
+                  <li>- 연결 확인이 끝나면 다음 단계에서 설치를 바로 진행할 수 있습니다.</li>
                 </ul>
               </div>
 
@@ -252,9 +252,8 @@ export default function WelcomePage() {
                 시작 전에 꼭 읽어주세요
               </p>
               <ul className="list-disc pl-5 space-y-1">
-                <li>다음 단계에서 설치할 항목을 직접 선택합니다.</li>
-                <li>블루투스만 설치할 수도 있고, 온스크린 키패드만 설치할 수도 있습니다.</li>
-                <li>온스크린 키패드는 시스템 바이너리를 수정하므로 보증에 영향을 줄 수 있습니다.</li>
+                <li>현재는 Type Folio와 블루투스 키보드용 한글 입력만 지원합니다.</li>
+                <li>기존 설치 상태가 남아 있다면 원상복구 후 다시 진행하세요.</li>
                 <li>전체 원상복구 기능으로 원본 상태로 되돌릴 수 있습니다.</li>
               </ul>
               <p className="mt-3 text-[12px]" style={{ color: "var(--border)" }}>
