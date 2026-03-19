@@ -167,6 +167,23 @@ type outputSlot struct {
 	lastUsed uint64
 }
 
+type DeviceInfo struct {
+	Path    string
+	Name    string
+	BusType string
+}
+
+type ManagedInput struct {
+	Info DeviceInfo
+	File *os.File
+}
+
+type InputMessage struct {
+	Path  string
+	Event InputEvent
+	Err   error
+}
+
 func makeKeyIndexTable(pairs ...keyIndexPair) [maxKeyCode + 1]int8 {
 	var table [maxKeyCode + 1]int8
 	for i := range table {
@@ -843,7 +860,9 @@ type HangulState struct {
 
 type Daemon struct {
 	mu             sync.Mutex
-	inputFd        *os.File
+	inputs         map[string]*ManagedInput
+	inputCh        chan InputMessage
+	rescanCh       chan struct{}
 	uinputFd       *os.File
 	korean         bool
 	shifted        bool
@@ -1064,6 +1083,16 @@ func (d *Daemon) passthroughWithShift(ev InputEvent) {
 	}
 
 	d.passthrough(ev)
+}
+
+func (d *Daemon) signalRescan() {
+	if d.rescanCh == nil {
+		return
+	}
+	select {
+	case d.rescanCh <- struct{}{}:
+	default:
+	}
 }
 
 func (d *Daemon) initOutputLayout() error {
@@ -1793,67 +1822,89 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	d.passthroughWithShift(ev)
 }
 
-func findBTKeyboard(verbose bool) (string, error) {
+func readDeviceInfo(devPath string) (DeviceInfo, error) {
+	base := devPath
+	if idx := strings.LastIndex(base, "/"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	num := strings.TrimPrefix(base, "event")
+	nameFile := fmt.Sprintf("/sys/class/input/event%s/device/name", num)
+	nameBytes, err := os.ReadFile(nameFile)
+	if err != nil {
+		return DeviceInfo{}, err
+	}
+	info := DeviceInfo{
+		Path: devPath,
+		Name: strings.TrimSpace(string(nameBytes)),
+	}
+	busTypeBytes, err := os.ReadFile(fmt.Sprintf("/sys/class/input/event%s/device/id/bustype", num))
+	if err == nil {
+		info.BusType = strings.TrimSpace(string(busTypeBytes))
+	}
+	return info, nil
+}
+
+func isSupportedKeyboardDevice(info DeviceInfo) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(info.Name))
+	if lowerName == "" {
+		return false
+	}
+	for _, term := range []string{"hangul", "gpio", "pwrkey", "power", "button", "touchscreen", "touch", "stylus", "wacom", "pen", "hall", "sensor", "marker"} {
+		if strings.Contains(lowerName, term) {
+			return false
+		}
+	}
+	if info.BusType == "0005" {
+		return true
+	}
+	for _, term := range []string{"keyboard", "keys", "keychron", "hhkb", "magic keyboard", "mx keys", "k380", "k780", "type folio", "folio"} {
+		if strings.Contains(lowerName, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func scanKeyboardDevices(preferredPath string, verbose bool) ([]DeviceInfo, error) {
 	entries, err := os.ReadDir("/dev/input")
 	if err != nil {
-		return "", fmt.Errorf("readdir /dev/input: %w", err)
+		return nil, fmt.Errorf("readdir /dev/input: %w", err)
 	}
-
+	devices := make([]DeviceInfo, 0)
+	seen := make(map[string]struct{})
+	appendDevice := func(info DeviceInfo) {
+		if _, ok := seen[info.Path]; ok {
+			return
+		}
+		seen[info.Path] = struct{}{}
+		devices = append(devices, info)
+	}
+	if preferredPath != "" {
+		if info, err := readDeviceInfo(preferredPath); err == nil {
+			if verbose || debugLogging {
+				log.Printf("입력 디바이스 후보(우선): %s = %s", info.Path, info.Name)
+			}
+			appendDevice(info)
+		}
+	}
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name(), "event") {
 			continue
 		}
 		devPath := "/dev/input/" + entry.Name()
-
-		num := strings.TrimPrefix(entry.Name(), "event")
-		nameFile := fmt.Sprintf("/sys/class/input/event%s/device/name", num)
-		nameBytes, err := os.ReadFile(nameFile)
+		info, err := readDeviceInfo(devPath)
 		if err != nil {
 			continue
 		}
-		name := strings.TrimSpace(string(nameBytes))
 		if verbose || debugLogging {
-			log.Printf("입력 디바이스 발견: %s = %s", devPath, name)
+			log.Printf("입력 디바이스 발견: %s = %s", devPath, info.Name)
 		}
-
-		lowerName := strings.ToLower(strings.TrimSpace(name))
-		if lowerName == "" {
+		if !isSupportedKeyboardDevice(info) {
 			continue
 		}
-		busTypeBytes, err := os.ReadFile(fmt.Sprintf("/sys/class/input/event%s/device/id/bustype", num))
-		busType := ""
-		if err == nil {
-			busType = strings.TrimSpace(string(busTypeBytes))
-		}
-		skip := false
-		for _, term := range []string{"hangul", "gpio", "pwrkey", "power", "button", "touchscreen", "touch", "stylus", "wacom", "pen", "hall", "sensor", "marker"} {
-			if strings.Contains(lowerName, term) {
-				skip = true
-				break
-			}
-		}
-		if skip {
-			continue
-		}
-		if busType != "0005" &&
-			!strings.Contains(lowerName, "keyboard") &&
-			!strings.Contains(lowerName, "keys") &&
-			!strings.Contains(lowerName, "keychron") &&
-			!strings.Contains(lowerName, "hhkb") &&
-			!strings.Contains(lowerName, "magic keyboard") &&
-			!strings.Contains(lowerName, "mx keys") &&
-			!strings.Contains(lowerName, "k380") &&
-			!strings.Contains(lowerName, "k780") {
-			continue
-		}
-
-		{
-			log.Printf("BT 키보드 선택: %s (%s)", devPath, name)
-			return devPath, nil
-		}
+		appendDevice(info)
 	}
-
-	return "", fmt.Errorf("BT keyboard not found in /dev/input")
+	return devices, nil
 }
 
 func findXochitlPID() (int, error) {
@@ -1879,27 +1930,70 @@ func findXochitlPID() (int, error) {
 	return 0, fmt.Errorf("xochitl process not found")
 }
 
-func (d *Daemon) openAndGrab(devicePath string) error {
-	f, err := os.OpenFile(devicePath, os.O_RDONLY, 0)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", devicePath, err)
+func (d *Daemon) addInputDeviceLocked(info DeviceInfo) error {
+	if _, ok := d.inputs[info.Path]; ok {
+		return nil
 	}
-	d.inputFd = f
-
+	f, err := os.OpenFile(info.Path, os.O_RDONLY, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", info.Path, err)
+	}
 	if err := ioctl(f.Fd(), EVIOCGRAB, 1); err != nil {
 		f.Close()
-		d.inputFd = nil
-		return fmt.Errorf("EVIOCGRAB: %w", err)
+		return fmt.Errorf("EVIOCGRAB %s: %w", info.Path, err)
 	}
-	log.Printf("독점 grab: %s", devicePath)
+	if d.inputs == nil {
+		d.inputs = make(map[string]*ManagedInput)
+	}
+	d.inputs[info.Path] = &ManagedInput{Info: info, File: f}
+	log.Printf("입력 장치 grab: %s (%s)", info.Path, info.Name)
+	go d.readInputLoop(info.Path, f)
 	return nil
 }
 
-func (d *Daemon) closeInput() {
-	if d.inputFd != nil {
-		_ = ioctl(d.inputFd.Fd(), EVIOCGRAB, 0)
-		d.inputFd.Close()
-		d.inputFd = nil
+func (d *Daemon) removeInputDeviceLocked(path string) {
+	input, ok := d.inputs[path]
+	if !ok {
+		return
+	}
+	delete(d.inputs, path)
+	if input.File != nil {
+		_ = ioctl(input.File.Fd(), EVIOCGRAB, 0)
+		_ = input.File.Close()
+	}
+	log.Printf("입력 장치 해제: %s (%s)", input.Info.Path, input.Info.Name)
+}
+
+func (d *Daemon) closeAllInputsLocked() {
+	for path := range d.inputs {
+		d.removeInputDeviceLocked(path)
+	}
+}
+
+func (d *Daemon) readInputLoop(path string, f *os.File) {
+	fd := int(f.Fd())
+	var buf [inputEventSize]byte
+	eventCount := 0
+	for {
+		n, err := syscall.Read(fd, buf[:])
+		if err != nil {
+			d.inputCh <- InputMessage{Path: path, Err: fmt.Errorf("read %s: %w", path, err)}
+			return
+		}
+		if n != inputEventSize {
+			continue
+		}
+
+		var ev InputEvent
+		ev.Type = binary.LittleEndian.Uint16(buf[16:18])
+		ev.Code = binary.LittleEndian.Uint16(buf[18:20])
+		ev.Value = int32(binary.LittleEndian.Uint32(buf[20:24]))
+
+		eventCount++
+		if debugLogging && (eventCount <= 10 || ev.Type == EV_KEY) {
+			log.Printf("[EVT] %s #%d type=%d code=%d val=%d", path, eventCount, ev.Type, ev.Code, ev.Value)
+		}
+		d.inputCh <- InputMessage{Path: path, Event: ev}
 	}
 }
 
@@ -1944,28 +2038,47 @@ func (w *inputDirWatcher) wait() error {
 	}
 }
 
-func waitForKeyboard() string {
+func (d *Daemon) watchKeyboardDevices() {
 	for {
 		watcher, err := newInputDirWatcher()
 		if err != nil {
-			if path, scanErr := findBTKeyboard(false); scanErr == nil {
-				return path
-			}
+			d.signalRescan()
 			time.Sleep(2 * time.Second)
 			continue
 		}
-
-		if path, err := findBTKeyboard(false); err == nil {
-			watcher.close()
-			return path
-		}
-
-		_ = watcher.wait()
+		err = watcher.wait()
 		watcher.close()
+		if err != nil && err != syscall.EBADF {
+			log.Printf("입력 디렉토리 감시 오류: %v", err)
+			time.Sleep(500 * time.Millisecond)
+		}
+		d.signalRescan()
 	}
 }
 
-func (d *Daemon) run(devicePath string) error {
+func (d *Daemon) reconcileInputsLocked(devices []DeviceInfo) {
+	desired := make(map[string]DeviceInfo, len(devices))
+	for _, info := range devices {
+		desired[info.Path] = info
+	}
+	for path := range d.inputs {
+		if _, ok := desired[path]; !ok {
+			d.removeInputDeviceLocked(path)
+		}
+	}
+	for _, info := range devices {
+		if err := d.addInputDeviceLocked(info); err != nil {
+			log.Printf("입력 장치 추가 실패: %s (%s): %v", info.Path, info.Name, err)
+		}
+	}
+	if len(d.inputs) == 0 && d.layoutActive {
+		if err := d.restoreOutputLayout(); err != nil {
+			log.Printf("입력 장치 없음: 출력 레이아웃 복원 실패: %v", err)
+		}
+	}
+}
+
+func (d *Daemon) run(preferredPath string) error {
 	// 패처 초기화 (디스크에서 KEY_Q 오프셋 검색)
 	d.patcher = &KeymapPatcher{}
 	if err := d.patcher.init(); err != nil {
@@ -1994,69 +2107,53 @@ func (d *Daemon) run(devicePath string) error {
 		return fmt.Errorf("initial output layout reinit: %w", err)
 	}
 	log.Println("모드: 한글 (CapsLock으로 전환)")
+	d.inputCh = make(chan InputMessage, 128)
+	d.rescanCh = make(chan struct{}, 1)
+	d.inputs = make(map[string]*ManagedInput)
 
-	currentPath := devicePath
+	go d.watchKeyboardDevices()
+	d.signalRescan()
 
 	for {
-		if err := d.openAndGrab(currentPath); err != nil {
-			log.Printf("키보드 열기 실패: %v", err)
-			log.Println("BT 키보드 재연결 대기 중...")
-			currentPath = waitForKeyboard()
-			continue
-		}
-
-		d.mu.Lock()
-		err := d.reinitializeOutputLayoutForCurrentMode()
-		d.mu.Unlock()
-		if err != nil {
-			d.closeInput()
-			log.Printf("출력 레이아웃 재초기화 실패: %v", err)
-			log.Println("BT 키보드 재연결 대기 중...")
-			currentPath = waitForKeyboard()
-			continue
-		}
-
-		log.Printf("이벤트 루프 시작: %s", currentPath)
-		loopErr := d.eventLoop()
-		d.closeInput()
-
-		if loopErr != nil {
-			log.Printf("이벤트 루프 오류: %v", loopErr)
-			log.Println("BT 키보드 재연결 대기 중...")
-			if err := d.commitCurrent(); err != nil {
-				log.Printf("[OUTPUT] commit current failed during reconnect: %v", err)
+		select {
+		case <-d.rescanCh:
+			devices, err := scanKeyboardDevices(preferredPath, false)
+			preferredPath = ""
+			if err != nil {
+				log.Printf("키보드 스캔 실패: %v", err)
+				time.Sleep(500 * time.Millisecond)
+				d.signalRescan()
+				continue
 			}
-			currentPath = waitForKeyboard()
+			d.mu.Lock()
+			d.reconcileInputsLocked(devices)
+			d.mu.Unlock()
+		case msg := <-d.inputCh:
+			d.mu.Lock()
+			if msg.Err != nil {
+				if _, ok := d.inputs[msg.Path]; ok {
+					log.Printf("입력 장치 오류: %v", msg.Err)
+					if err := d.commitCurrent(); err != nil {
+						log.Printf("[OUTPUT] commit current failed during input removal: %v", err)
+					}
+					d.removeInputDeviceLocked(msg.Path)
+					if len(d.inputs) == 0 && d.layoutActive {
+						if err := d.restoreOutputLayout(); err != nil {
+							log.Printf("입력 장치 없음: 출력 레이아웃 복원 실패: %v", err)
+						}
+					}
+				}
+				d.mu.Unlock()
+				d.signalRescan()
+				continue
+			}
+			if _, ok := d.inputs[msg.Path]; !ok {
+				d.mu.Unlock()
+				continue
+			}
+			d.handleEvent(msg.Event)
+			d.mu.Unlock()
 		}
-	}
-}
-
-func (d *Daemon) eventLoop() error {
-	fd := int(d.inputFd.Fd())
-	var buf [inputEventSize]byte
-	eventCount := 0
-	for {
-		n, err := syscall.Read(fd, buf[:])
-		if err != nil {
-			return fmt.Errorf("read: %w", err)
-		}
-		if n != inputEventSize {
-			continue
-		}
-
-		var ev InputEvent
-		ev.Type = binary.LittleEndian.Uint16(buf[16:18])
-		ev.Code = binary.LittleEndian.Uint16(buf[18:20])
-		ev.Value = int32(binary.LittleEndian.Uint32(buf[20:24]))
-
-		eventCount++
-		if debugLogging && (eventCount <= 10 || ev.Type == EV_KEY) {
-			log.Printf("[EVT] #%d type=%d code=%d val=%d", eventCount, ev.Type, ev.Code, ev.Value)
-		}
-
-		d.mu.Lock()
-		d.handleEvent(ev)
-		d.mu.Unlock()
 	}
 }
 
@@ -2064,7 +2161,7 @@ func (d *Daemon) cleanup() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.cancelIdleFlush()
-	d.closeInput()
+	d.closeAllInputsLocked()
 	if d.patcher != nil {
 		for _, slot := range d.outputSlots {
 			_ = d.patcher.restoreKeyEntry(slot.spec.code, slot.spec.mod)
@@ -2085,17 +2182,12 @@ func (d *Daemon) cleanup() {
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
-	log.Printf("Hangul Keyboard Daemon v2 시작 (디바이스 재생성 방식)")
+	log.Printf("Hangul Keyboard Daemon v2 시작 (다중 입력 장치 지원)")
 
-	devicePath := ""
+	preferredPath := ""
 	if len(os.Args) > 1 {
-		devicePath = os.Args[1]
-	} else {
-		log.Println("BT 키보드 탐색 중...")
-		devicePath = waitForKeyboard()
+		preferredPath = os.Args[1]
 	}
-
-	log.Printf("디바이스: %s", devicePath)
 
 	d := &Daemon{}
 
@@ -2108,7 +2200,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	if err := d.run(devicePath); err != nil {
+	if err := d.run(preferredPath); err != nil {
 		d.cleanup()
 		log.Fatal(err)
 	}
