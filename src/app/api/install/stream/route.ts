@@ -19,6 +19,7 @@ interface FileMapping {
 interface InstallState {
   installKeypad: boolean;
   installBt: boolean;
+  swapLeftCtrlCapsLock: boolean;
   locales: string[];
 }
 
@@ -191,10 +192,13 @@ async function detectInstalledState(
       fi
       if [ -f /home/root/bt-keyboard/install-state.conf ]; then
         . /home/root/bt-keyboard/install-state.conf
+        echo "SWAP_LEFT_CTRL_CAPSLOCK=\${SWAP_LEFT_CTRL_CAPSLOCK:-0}"
         echo "LOCALES=\${KEYBOARD_LOCALES:-}"
       elif [ -d /home/root/.kbds ]; then
+        echo "SWAP_LEFT_CTRL_CAPSLOCK=0"
         echo "LOCALES=$(find /home/root/.kbds -mindepth 1 -maxdepth 1 -type d -exec basename {} \\; | sort | tr '\n' ',' | sed 's/,$//')"
       else
+        echo "SWAP_LEFT_CTRL_CAPSLOCK=0"
         echo "LOCALES="
       fi
       [ -f /home/root/bt-keyboard/backup/xochitl.original ] && echo "HOME_BACKUP=yes" || echo "HOME_BACKUP=no"
@@ -208,10 +212,15 @@ async function detectInstalledState(
   const locales = localesLine
     ? localesLine.replace("LOCALES=", "").split(",").filter(Boolean)
     : [];
+  const swapLeftCtrlCapsLockLine = output
+    .split("\n")
+    .find((line) => line.startsWith("SWAP_LEFT_CTRL_CAPSLOCK="));
+  const swapLeftCtrlCapsLock = swapLeftCtrlCapsLockLine?.replace("SWAP_LEFT_CTRL_CAPSLOCK=", "") === "1";
 
   return {
     installKeypad: output.includes("KEYPAD=yes"),
     installBt: output.includes("BT=yes"),
+    swapLeftCtrlCapsLock,
     locales,
     hasHomeBackup: output.includes("HOME_BACKUP=yes"),
     hasOptBackup: output.includes("OPT_BACKUP=yes"),
@@ -228,6 +237,9 @@ async function verifyInstalledRuntime(
     return false;
   }
   if (currentState.installBt !== expectedState.installBt) {
+    return false;
+  }
+  if (currentState.swapLeftCtrlCapsLock !== expectedState.swapLeftCtrlCapsLock) {
     return false;
   }
   if (expectedState.installBt) {
@@ -1081,6 +1093,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = request.nextUrl;
   const installKeypad = searchParams.get("keypad") === "true";
   const installBt = searchParams.get("bt") !== "false";
+  const swapLeftCtrlCapsLock = searchParams.get("swapLeftCtrlCapsLock") === "true";
   const session = getSshSessionFromRequest(request);
 
   if (!session) {
@@ -1112,17 +1125,19 @@ export async function GET(request: NextRequest): Promise<Response> {
         const requestedState: InstallState = {
           installKeypad: false,
           installBt,
+          swapLeftCtrlCapsLock,
           locales: [],
         };
         const currentState = await detectInstalledState(ip, password);
         const effectiveState: InstallState = {
           installKeypad: false,
           installBt: true,
+          swapLeftCtrlCapsLock,
           locales: [],
         };
 
         send("log", {
-          line: `STATE: current keypad=${currentState.installKeypad ? 1 : 0}, bt=${currentState.installBt ? 1 : 0}, locales=${currentState.locales.join(",") || "-"}, homeBackup=${currentState.hasHomeBackup ? 1 : 0}, optBackup=${currentState.hasOptBackup ? 1 : 0}; requested keypad=${requestedState.installKeypad ? 1 : 0}, bt=${requestedState.installBt ? 1 : 0}, locales=${requestedState.locales.join(",") || "-"}; effective keypad=${effectiveState.installKeypad ? 1 : 0}, bt=${effectiveState.installBt ? 1 : 0}, locales=${effectiveState.locales.join(",") || "-"}`,
+          line: `STATE: current keypad=${currentState.installKeypad ? 1 : 0}, bt=${currentState.installBt ? 1 : 0}, swapCtrlCaps=${currentState.swapLeftCtrlCapsLock ? 1 : 0}, locales=${currentState.locales.join(",") || "-"}, homeBackup=${currentState.hasHomeBackup ? 1 : 0}, optBackup=${currentState.hasOptBackup ? 1 : 0}; requested keypad=${requestedState.installKeypad ? 1 : 0}, bt=${requestedState.installBt ? 1 : 0}, swapCtrlCaps=${requestedState.swapLeftCtrlCapsLock ? 1 : 0}, locales=${requestedState.locales.join(",") || "-"}; effective keypad=${effectiveState.installKeypad ? 1 : 0}, bt=${effectiveState.installBt ? 1 : 0}, swapCtrlCaps=${effectiveState.swapLeftCtrlCapsLock ? 1 : 0}, locales=${effectiveState.locales.join(",") || "-"}`,
         });
 
         if (currentState.installKeypad) {
@@ -1183,15 +1198,15 @@ export async function GET(request: NextRequest): Promise<Response> {
 
         // Step 1.5: 기존 서비스 중지
         try {
-          await runSsh(
-            ip,
-            password,
-            "systemctl stop hangul-daemon.service 2>/dev/null || true; systemctl stop hangul-restore.service 2>/dev/null || true; rm -f /home/root/.hangul-restore-login.sh; if [ -f /home/root/.profile ]; then sed -i '\\|/home/root/.hangul-restore-login.sh|d' /home/root/.profile 2>/dev/null || true; fi",
-          );
-          send("log", { line: "OK: 기존 서비스 중지 및 로그인 restore 정리 완료" });
-        } catch {
-          // 서비스 미존재 시 무시
-        }
+            await runSsh(
+              ip,
+              password,
+              "systemctl stop hangul-daemon.service 2>/dev/null || true; systemctl stop hangul-restore.service 2>/dev/null || true; rm -f /home/root/.hangul-restore-login.sh; if [ -f /home/root/.profile ]; then sed -i '\\|/home/root/.hangul-restore-login.sh|d' /home/root/.profile 2>/dev/null || true; fi; if [ -f /home/root/.bashrc ]; then sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true; fi",
+            );
+            send("log", { line: "OK: 기존 서비스 중지 및 로그인 restore 정리 완료" });
+          } catch {
+            // 서비스 미존재 시 무시
+          }
 
         // === Step 2: 파일 업로드 ===
         const filesToUpload: FileMapping[] = [
@@ -1247,7 +1262,7 @@ export async function GET(request: NextRequest): Promise<Response> {
           const installOutput = await runSsh(
             ip,
             password,
-            `INSTALL_KEYPAD=${effectiveState.installKeypad ? "1" : "0"} INSTALL_BT=${effectiveState.installBt ? "1" : "0"} bash /home/root/bt-keyboard/install.sh`,
+          `INSTALL_KEYPAD=${effectiveState.installKeypad ? "1" : "0"} INSTALL_BT=${effectiveState.installBt ? "1" : "0"} SWAP_LEFT_CTRL_CAPSLOCK=${effectiveState.swapLeftCtrlCapsLock ? "1" : "0"} bash /home/root/bt-keyboard/install.sh`,
           );
           const lines = installOutput.split("\n");
           for (const line of lines) {

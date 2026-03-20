@@ -12,15 +12,21 @@ export function useGuard(): boolean {
   const { state } = useSetup();
 
   const isWelcome = pathname === "/";
-  const isManage = pathname === "/manage" || pathname === "/uninstall";
+  const allowsCredentialOnly =
+    pathname === "/prerequisites"
+    || pathname === "/connection"
+    || pathname === "/entry"
+    || pathname === "/manage"
+    || pathname === "/uninstall"
+    || pathname === "/bluetooth";
   const isAllowed = state.eulaAgreed && state.connected;
   const hasCredentials = Boolean(state.ip && state.password);
 
   useEffect(() => {
     if (isWelcome) return;
-    if (isManage && hasCredentials) return;
+    if (allowsCredentialOnly && hasCredentials) return;
     if (!isAllowed) router.replace("/");
-  }, [isWelcome, isManage, isAllowed, hasCredentials, router]);
+  }, [isWelcome, allowsCredentialOnly, isAllowed, hasCredentials, router]);
 
-  return isAllowed || isWelcome || (isManage && hasCredentials);
+  return isAllowed || isWelcome || (allowsCredentialOnly && hasCredentials);
 }

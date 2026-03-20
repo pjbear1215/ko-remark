@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
+import KeyboardSwapControl from "@/components/KeyboardSwapControl";
 import SectionDivider from "@/components/SectionDivider";
 import StatusCheck from "@/components/StatusCheck";
 import { useSetup } from "@/lib/store";
@@ -156,7 +157,7 @@ export default function CompletePage() {
 
   return (
     <div className="animate-fade-in-up">
-      <StepIndicator currentStep={5} />
+      <StepIndicator currentStep={6} />
 
       <div className="space-y-10">
         <div>
@@ -231,8 +232,13 @@ export default function CompletePage() {
         {/* 관리 섹션 */}
         {!verifying && (
           <div className="space-y-8 pt-4">
-            {/* 블루투스 관리 */}
             <div className="space-y-4 animate-fade-in-up stagger-1">
+              <SectionDivider label="키보드" />
+              <KeyboardSwapControl ip={state.ip} password={state.password} />
+            </div>
+
+            {/* 블루투스 관리 */}
+            <div className="space-y-4 animate-fade-in-up stagger-2">
               <SectionDivider label="블루투스" />
 
               {state.btDeviceName && (
@@ -277,7 +283,7 @@ export default function CompletePage() {
             </div>
 
             {/* 폰트 교체 */}
-            <div className="space-y-4 animate-fade-in-up stagger-2">
+            <div className="space-y-4 animate-fade-in-up stagger-3">
               <SectionDivider label="폰트 교체" />
               <div className="flex items-center justify-between py-2">
                 <span className="text-[16px]" style={{ color: "var(--text-muted)" }}>
@@ -308,7 +314,7 @@ export default function CompletePage() {
             </div>
 
             {/* 진단 */}
-            <div className="space-y-4 animate-fade-in-up stagger-3">
+            <div className="space-y-4 animate-fade-in-up stagger-4">
               <SectionDivider label="진단" />
               <div className="flex items-center justify-between py-2">
                 <span className="text-[16px]" style={{ color: "var(--text-muted)" }}>
@@ -367,7 +373,7 @@ export default function CompletePage() {
             처음으로
           </Button>
           <Button onClick={() => router.push("/manage")} disabled={verifying} size="lg">
-            기기 관리
+            설정 변경
           </Button>
         </div>
       </div>

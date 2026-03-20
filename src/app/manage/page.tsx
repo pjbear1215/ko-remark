@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/Button";
+import KeyboardSwapControl from "@/components/KeyboardSwapControl";
 import SectionDivider from "@/components/SectionDivider";
 import { useSetup } from "@/lib/store";
 
@@ -63,10 +64,10 @@ export default function ManagePage() {
               className="text-[36px] font-bold leading-tight"
               style={{ color: "var(--text-primary)" }}
             >
-              기기 관리
+              설정 변경
             </h1>
             <p className="text-[15px]" style={{ color: "var(--text-muted)", marginTop: "8px" }}>
-              설치를 다시 진행하지 않고, 필요한 관리 작업만 실행합니다.
+              다시 설정하지 않고, 현재 기기에서 필요한 항목만 바꿉니다.
             </p>
           </div>
           <Button variant="ghost" onClick={() => router.push("/")}>
@@ -95,7 +96,28 @@ export default function ManagePage() {
         </div>
 
         <div className="animate-fade-in-up stagger-2" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <SectionDivider label="키보드" />
+          <KeyboardSwapControl ip={state.ip} password={state.password} />
+        </div>
+
+        <div className="animate-fade-in-up stagger-3" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <SectionDivider label="블루투스" />
+          <div
+            className="card-interactive flex items-center justify-between"
+            style={{ padding: "20px 24px" }}
+          >
+            <div>
+              <p className="text-[16px] font-medium" style={{ color: "var(--text-primary)" }}>
+                키보드 재설정
+              </p>
+              <p className="text-[14px]" style={{ color: "var(--text-muted)", marginTop: "4px" }}>
+                다시 스캔하고 다른 블루투스 키보드를 페어링하거나 기존 연결을 바꿉니다.
+              </p>
+            </div>
+            <Button variant="secondary" onClick={() => router.push("/bluetooth?mode=manage")}>
+              열기
+            </Button>
+          </div>
           <div
             className="card-interactive flex items-center justify-between"
             style={{ padding: "20px 24px" }}
@@ -117,7 +139,7 @@ export default function ManagePage() {
           )}
         </div>
 
-        <div className="animate-fade-in-up stagger-3" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div className="animate-fade-in-up stagger-4" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <SectionDivider label="폰트 교체" />
           <input
             ref={fontInputRef}
@@ -163,7 +185,7 @@ export default function ManagePage() {
           )}
         </div>
 
-        <div className="animate-fade-in-up stagger-4" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div className="animate-fade-in-up stagger-5" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <SectionDivider label="진단" />
           <div
             className="card-interactive flex items-center justify-between"

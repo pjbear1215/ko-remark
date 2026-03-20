@@ -1,7 +1,7 @@
 "use client";
 
 // 단계 표시 도트-앤-라인 프로그레스 인디케이터
-const steps = ["시작", "준비", "연결", "설치", "BT", "완료"];
+const steps = ["시작", "준비", "연결", "선택", "설치", "BT", "완료"];
 
 interface StepIndicatorProps {
   currentStep: number;

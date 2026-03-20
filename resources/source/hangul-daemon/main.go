@@ -110,6 +110,7 @@ const (
 	maxKeyCode             = KEY_CAPSLOCK
 	invalidIndex8          = int8(-1)
 	debugLogging           = false
+	installStatePath       = "/home/root/bt-keyboard/install-state.conf"
 	minIdleFlushDelay      = 100 * time.Millisecond
 	maxIdleFlushDelay      = 260 * time.Millisecond
 	adaptiveMinKeyGap      = 40 * time.Millisecond
@@ -929,6 +930,7 @@ type Daemon struct {
 	outputWg       sync.WaitGroup
 	uinputFd       *os.File
 	korean         bool
+	swapLeftCtrlCapsLock bool
 	shifted        bool
 	shiftForwarded bool
 	shiftSpaceTogglePending bool
@@ -2029,6 +2031,26 @@ func stopAndDrainTimer(timer *time.Timer) {
 	}
 }
 
+func readInstallStateBool(path string, key string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	prefix := key + "="
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
+	}
+	return false
+}
+
 func (d *Daemon) startIdleFlushLoop() {
 	if d.idleFlushCmdCh == nil {
 		return
@@ -2464,6 +2486,14 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	if ev.Type != EV_KEY {
 		d.passthrough(ev)
 		return
+	}
+	if d.swapLeftCtrlCapsLock {
+		switch ev.Code {
+		case KEY_CAPSLOCK:
+			ev.Code = KEY_LEFTCTRL
+		case KEY_LEFTCTRL:
+			ev.Code = KEY_CAPSLOCK
+		}
 	}
 	// Shift 상태 체크
 	if ev.Code == KEY_LEFTSHIFT || ev.Code == KEY_RIGHTSHIFT {
@@ -2978,6 +3008,10 @@ func main() {
 	}
 
 	d := &Daemon{}
+	d.swapLeftCtrlCapsLock = readInstallStateBool(installStatePath, "SWAP_LEFT_CTRL_CAPSLOCK")
+	if d.swapLeftCtrlCapsLock {
+		log.Println("옵션: Left Ctrl/CapsLock 교체 사용")
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

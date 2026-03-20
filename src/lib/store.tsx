@@ -9,6 +9,7 @@ interface SetupState {
   connected: boolean;
   eulaAgreed: boolean;
   installBtKeyboard: boolean;
+  swapLeftCtrlCapsLock: boolean;
   btDeviceAddress: string;
   btDeviceName: string;
   detectedDevice: "paper-pro-move" | "paper-pro" | null;
@@ -74,6 +75,7 @@ const defaultState: SetupState = {
   connected: false,
   eulaAgreed: false,
   installBtKeyboard: true,
+  swapLeftCtrlCapsLock: false,
   btDeviceAddress: "",
   btDeviceName: "",
   detectedDevice: null,
@@ -88,6 +90,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
     ip: getStoredValue("remarkable-ip", ""),
     password: getStoredEncrypted("remarkable-pw"),
     deviceType: (getStoredValue("remarkable-device", "") as SetupState["deviceType"]) || null,
+    swapLeftCtrlCapsLock: getStoredValue("remarkable-swap-left-ctrl-capslock", "") === "1",
   }));
 
   const setState = (updates: Partial<SetupState>) => {
@@ -97,6 +100,12 @@ export function SetupProvider({ children }: { children: ReactNode }) {
         if (updates.password !== undefined) localStorage.setItem("remarkable-pw", encryptValue(updates.password));
         if (updates.deviceType !== undefined && updates.deviceType !== null) {
           localStorage.setItem("remarkable-device", updates.deviceType);
+        }
+        if (updates.swapLeftCtrlCapsLock !== undefined) {
+          localStorage.setItem(
+            "remarkable-swap-left-ctrl-capslock",
+            updates.swapLeftCtrlCapsLock ? "1" : "0",
+          );
         }
       } catch { /* localStorage unavailable */ }
     }

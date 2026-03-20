@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
-import Checkbox from "@/components/Checkbox";
 import { useSetup } from "@/lib/store";
 
 export default function WelcomePage() {
@@ -16,8 +15,6 @@ export default function WelcomePage() {
   const [showPassword, setShowPassword] = useState(false);
   const [pinging, setPinging] = useState(false);
   const [pingResult, setPingResult] = useState<"connected" | "disconnected" | null>(null);
-  const [eulaChecked, setEulaChecked] = useState(state.eulaAgreed);
-  const [showUsbWarning, setShowUsbWarning] = useState(false);
 
   useEffect(() => {
     if (state.ip) setIp(state.ip);
@@ -45,7 +42,7 @@ export default function WelcomePage() {
   const isReachable = pingResult === "connected";
 
   const handleNext = () => {
-    setState({ ip, password, eulaAgreed: eulaChecked });
+    setState({ ip, password, connected: true });
     router.push("/prerequisites");
   };
 
@@ -54,36 +51,19 @@ export default function WelcomePage() {
       <StepIndicator currentStep={0} />
 
       <div className="space-y-10">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1
-              className="text-[36px] font-bold leading-tight"
-              style={{ color: "var(--text-primary)" }}
-            >
-              ko-remark
-            </h1>
-            <p
-              className="mt-3 text-[17px]"
-              style={{ color: "var(--text-muted)" }}
-            >
-              USB 연결을 확인한 뒤, Type Folio와 블루투스 키보드용 한글 입력 설치를 진행합니다.
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              if (isReachable && password) {
-                setShowUsbWarning(false);
-                setState({ ip, password });
-                router.push("/manage");
-              } else {
-                setShowUsbWarning(true);
-              }
-            }}
+        <div>
+          <h1
+            className="text-[36px] font-bold leading-tight"
+            style={{ color: "var(--text-primary)" }}
           >
-            기기 관리
-          </Button>
+            ko-remark
+          </h1>
+          <p
+            className="mt-3 text-[17px]"
+            style={{ color: "var(--text-muted)" }}
+          >
+            USB 연결과 SSH 정보를 확인한 뒤 다음 단계로 진행하세요.
+          </p>
         </div>
 
         <div className="space-y-5 stagger-1">
@@ -138,7 +118,10 @@ export default function WelcomePage() {
                   <input
                     type={showPassword ? "text" : "password"}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      setPingResult(null);
+                    }}
                     className="w-full pr-12 text-[17px] rounded-xl input-enhanced"
                     style={{
                       backgroundColor: "var(--bg-card)",
@@ -191,7 +174,7 @@ export default function WelcomePage() {
                 <ul className="mt-2 space-y-1 text-[13px]" style={{ color: "var(--text-muted)" }}>
                   <li>- USB 케이블이 연결되어 있어야 합니다.</li>
                   <li>- 기기에서 개발자 모드와 SSH가 켜져 있어야 합니다.</li>
-                  <li>- 연결 확인이 끝나면 다음 단계에서 설치를 바로 진행할 수 있습니다.</li>
+                  <li>- 연결 확인이 끝나면 사전 준비와 기기 확인을 진행합니다.</li>
                 </ul>
               </div>
 
@@ -220,62 +203,17 @@ export default function WelcomePage() {
                     : "연결할 수 없습니다. USB 케이블과 SSH 비밀번호를 다시 확인하세요."}
                 </div>
               )}
-
-              {showUsbWarning && !isReachable && (
-                <div
-                  className="rounded-xl text-[16px] animate-fade-in"
-                  style={{
-                    backgroundColor: "var(--warning-light)",
-                    color: "var(--warning)",
-                    padding: "20px 24px",
-                  }}
-                >
-                  기기 관리를 사용하려면 먼저 USB 연결 확인을 완료해야 합니다.
-                </div>
-              )}
             </div>
           </div>
         </div>
 
-        {isReachable && (
-          <div className="space-y-4 stagger-2">
-            <div style={{ height: "1px", backgroundColor: "var(--border-light)" }} />
-            <div
-              className="p-6 rounded-xl text-[13px] leading-[22px] overflow-auto"
-              style={{
-                backgroundColor: "var(--bg-secondary)",
-                maxHeight: "240px",
-                color: "var(--text-muted)",
-              }}
-            >
-              <p className="font-semibold text-[14px] mb-3" style={{ color: "var(--text-primary)" }}>
-                시작 전에 꼭 읽어주세요
-              </p>
-              <ul className="list-disc pl-5 space-y-1">
-                <li>현재는 Type Folio와 블루투스 키보드용 한글 입력만 지원합니다.</li>
-                <li>기존 설치 상태가 남아 있다면 원상복구 후 다시 진행하세요.</li>
-                <li>전체 원상복구 기능으로 원본 상태로 되돌릴 수 있습니다.</li>
-              </ul>
-              <p className="mt-3 text-[12px]" style={{ color: "var(--border)" }}>
-                English: This tool is provided &quot;AS IS&quot; without warranty of any kind.
-                It is not affiliated with reMarkable AS. You are solely responsible for any changes made to your own device.
-              </p>
-            </div>
-            <Checkbox
-              checked={eulaChecked}
-              onChange={setEulaChecked}
-              label="위 내용을 읽었고, 제 기기에 적용되는 모든 변경의 책임이 본인에게 있음을 이해했습니다. / I understand that I am solely responsible for any changes made to my device."
-            />
-          </div>
-        )}
-
-        <div className="flex justify-end pt-4 stagger-3">
+        <div className="flex justify-end pt-4 stagger-2">
           <Button
             onClick={handleNext}
-            disabled={!mounted || !isReachable || !password || !eulaChecked}
+            disabled={!mounted || !isReachable || !password}
             size="lg"
           >
-            다음 단계로
+            다음
           </Button>
         </div>
       </div>

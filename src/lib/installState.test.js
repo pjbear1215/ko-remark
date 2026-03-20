@@ -10,8 +10,9 @@ test("renderInstallState writes shell-safe persisted flags", () => {
   assert.equal(
     renderInstallState({
       installBt: true,
+      swapLeftCtrlCapsLock: true,
     }),
-    "INSTALL_KEYPAD=0\nINSTALL_BT=1\nKEYBOARD_LOCALES=\n",
+    "INSTALL_KEYPAD=0\nINSTALL_BT=1\nSWAP_LEFT_CTRL_CAPSLOCK=1\nKEYBOARD_LOCALES=\n",
   );
 });
 

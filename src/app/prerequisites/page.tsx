@@ -34,6 +34,7 @@ export default function PrerequisitesPage() {
   const [toolStates, setToolStates] = useState<Record<string, ToolInstallState>>({});
   const [installProgress, setInstallProgress] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const autoNavigatedRef = useRef(false);
 
   useEffect(() => {
     if (!allowed) return;
@@ -73,6 +74,14 @@ export default function PrerequisitesPage() {
       eventSourceRef.current?.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (!allowed || checking || !allReady || autoNavigatedRef.current) {
+      return;
+    }
+    autoNavigatedRef.current = true;
+    router.push("/connection");
+  }, [allowed, checking, allReady, router]);
 
   if (!allowed) return null;
 

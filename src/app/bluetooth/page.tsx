@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
 import { useSetup } from "@/lib/store";
@@ -39,7 +39,9 @@ function isLikelyKeyboard(device: BtDevice): boolean {
 export default function BluetoothPage() {
   const allowed = useGuard();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { state, setState } = useSetup();
+  const isManageMode = searchParams.get("mode") === "manage";
   const [phase, setPhase] = useState<Phase>("scan");
   const [scanStatus, setScanStatus] = useState<ScanStatus>("idle");
   const [pairStatus, setPairStatus] = useState<PairStatus>("idle");
@@ -321,7 +323,7 @@ export default function BluetoothPage() {
 
   return (
     <div className="animate-fade-in-up">
-      <StepIndicator currentStep={4} />
+      {!isManageMode && <StepIndicator currentStep={5} />}
 
       <div className="space-y-10">
         <div>
@@ -329,13 +331,15 @@ export default function BluetoothPage() {
             className="text-[36px] font-bold leading-tight"
             style={{ color: "var(--text-primary)" }}
           >
-            블루투스 키보드
+            {isManageMode ? "블루투스 재설정" : "블루투스 키보드"}
           </h1>
           <p
             className="mt-3 text-[17px]"
             style={{ color: "var(--text-muted)" }}
           >
-            키보드를 페어링 모드로 설정한 후 검색하세요.
+            {isManageMode
+              ? "페어링 모드로 전환한 뒤 다시 검색하고 연결을 바꿀 수 있습니다."
+              : "키보드를 페어링 모드로 설정한 후 검색하세요."}
           </p>
         </div>
 
@@ -678,7 +682,7 @@ export default function BluetoothPage() {
               } else if (phase === "pair") {
                 handleRetryPair();
               } else {
-                router.push("/install");
+                router.push(isManageMode ? "/manage" : "/install");
               }
             }}
           >
@@ -686,16 +690,16 @@ export default function BluetoothPage() {
           </Button>
           <div className="flex gap-3">
             {!canGoNext && (
-              <Button variant="secondary" onClick={() => router.push("/complete")}>
-                건너뛰기
+              <Button variant="secondary" onClick={() => router.push(isManageMode ? "/manage" : "/complete")}>
+                {isManageMode ? "설정 변경으로" : "건너뛰기"}
               </Button>
             )}
             <Button
-              onClick={() => router.push("/complete")}
+              onClick={() => router.push(isManageMode ? "/manage" : "/complete")}
               disabled={!canGoNext}
               size="lg"
             >
-              다음
+              {isManageMode ? "설정 변경으로" : "다음"}
             </Button>
           </div>
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
@@ -23,6 +23,7 @@ export default function ConnectionPage() {
   const { state, setState } = useSetup();
   const [testing, setTesting] = useState(false);
   const [autoTested, setAutoTested] = useState(false);
+  const autoNavigatedRef = useRef(false);
   const [result, setResult] = useState<{
     connected: boolean;
     hostname?: string;
@@ -71,6 +72,14 @@ export default function ConnectionPage() {
   const detectedType = result?.detectedDevice;
   const isUnsupported = isConnected && !detectedType;
   const deviceReady = isConnected && detectedType;
+
+  useEffect(() => {
+    if (!allowed || testing || !deviceReady || autoNavigatedRef.current) {
+      return;
+    }
+    autoNavigatedRef.current = true;
+    router.push("/entry");
+  }, [allowed, testing, deviceReady, router]);
 
   if (!allowed) return null;
 
@@ -223,7 +232,7 @@ export default function ConnectionPage() {
             이전
           </Button>
           <Button
-            onClick={() => router.push("/install")}
+            onClick={() => router.push("/entry")}
             disabled={!deviceReady}
             size="lg"
           >

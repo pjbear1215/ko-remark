@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
+import Checkbox from "@/components/Checkbox";
 import ProgressBar from "@/components/ProgressBar";
 import TerminalOutput from "@/components/TerminalOutput";
 import ErrorReport from "@/components/ErrorReport";
@@ -55,7 +56,10 @@ export default function InstallPage() {
     setErrors([]);
     setProgress(0);
 
-    const params = new URLSearchParams({ bt: "true" });
+    const params = new URLSearchParams({
+      bt: "true",
+      swapLeftCtrlCapsLock: state.swapLeftCtrlCapsLock ? "true" : "false",
+    });
 
     try {
       await ensureSshSession(state.ip, state.password);
@@ -143,7 +147,7 @@ export default function InstallPage() {
 
   return (
     <div className="animate-fade-in-up">
-      <StepIndicator currentStep={3} />
+      <StepIndicator currentStep={4} />
 
       <div className="space-y-10">
         <div>
@@ -177,6 +181,12 @@ export default function InstallPage() {
                 Type Folio 및 블루투스 키보드용 한글 입력을 설치합니다.
               </p>
             </div>
+            <Checkbox
+              checked={state.swapLeftCtrlCapsLock}
+              onChange={(checked) => setState({ swapLeftCtrlCapsLock: checked })}
+              label="왼쪽 CapsLock과 왼쪽 Ctrl 위치 바꾸기"
+              description="켜면 왼쪽 CapsLock은 Ctrl처럼, 왼쪽 Ctrl은 CapsLock처럼 동작합니다."
+            />
 
             {/* 설치 전 확인 사항 */}
             <div className="space-y-3 mt-6 stagger-2">
@@ -358,7 +368,7 @@ export default function InstallPage() {
         <div className="flex justify-between pt-4">
           <Button
             variant="ghost"
-            onClick={() => router.push("/connection")}
+            onClick={() => router.push("/entry")}
             disabled={status === "installing"}
           >
             이전
