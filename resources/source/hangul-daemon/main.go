@@ -89,6 +89,7 @@ const (
 	KEY_SLASH      = 53
 	KEY_RIGHTSHIFT = 54
 	KEY_LEFTALT    = 56
+	KEY_RIGHTALT   = 100
 	KEY_SPACE      = 57
 	KEY_CAPSLOCK   = 58
 	KEY_TAB        = 15
@@ -929,6 +930,8 @@ type Daemon struct {
 	uinputFd       *os.File
 	korean         bool
 	shifted        bool
+	shiftForwarded bool
+	shiftSpaceTogglePending bool
 	ctrl_or_alt    bool
 	pendingVisible bool
 	visibleChar    rune
@@ -2000,6 +2003,20 @@ func (d *Daemon) restoreKeymap() {
 	log.Printf("[RESTORE] 원본 키맵 복원 완료")
 }
 
+func (d *Daemon) toggleKoreanMode() error {
+	if err := d.commitCurrent(); err != nil {
+		return err
+	}
+	d.restoreKeymap()
+	d.korean = !d.korean
+	if d.korean {
+		log.Println("모드: 한글")
+	} else {
+		log.Println("모드: 영문")
+	}
+	return nil
+}
+
 func stopAndDrainTimer(timer *time.Timer) {
 	if timer == nil {
 		return
@@ -2451,9 +2468,19 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 	// Shift 상태 체크
 	if ev.Code == KEY_LEFTSHIFT || ev.Code == KEY_RIGHTSHIFT {
 		d.shifted = (ev.Value != keyRelease)
-		if !d.korean || d.ctrl_or_alt {
-			d.passthrough(ev)
+		if ev.Value == keyRelease {
+			if d.shiftForwarded {
+				d.shiftForwarded = false
+				d.passthrough(ev)
+			}
+			return
 		}
+		if !d.korean || d.ctrl_or_alt {
+			d.shiftForwarded = true
+			d.passthrough(ev)
+			return
+		}
+		d.shiftForwarded = false
 		return
 	}
 	// Ctrl Alt 상태 체크
@@ -2471,20 +2498,38 @@ func (d *Daemon) handleEvent(ev InputEvent) {
 		return
 	}
 
-	// CapsLock 한영 모드 전환
-	if ev.Code == KEY_CAPSLOCK {
+	// Right Alt 한영 모드 전환
+	if ev.Code == KEY_RIGHTALT {
 		if ev.Value == keyPress {
-			if err := d.commitCurrent(); err != nil {
+			if err := d.toggleKoreanMode(); err != nil {
 				log.Printf("[OUTPUT] commit current failed: %v", err)
 			}
-			d.restoreKeymap()
-			d.korean = !d.korean
-			if d.korean {
-				log.Println("모드: 한글")
-			} else {
-				log.Println("모드: 영문")
+		}
+		return
+	}
+
+	// Shift+Space 한영 모드 전환
+	if ev.Code == KEY_SPACE && d.shifted && !d.ctrl_or_alt {
+		switch ev.Value {
+		case keyPress:
+			d.shiftSpaceTogglePending = true
+			if err := d.toggleKoreanMode(); err != nil {
+				log.Printf("[OUTPUT] commit current failed: %v", err)
+			}
+		case keyRelease:
+			if d.shiftSpaceTogglePending {
+				d.shiftSpaceTogglePending = false
 			}
 		}
+		return
+	}
+
+	// 한글 모드에서는 CapsLock이 xochitl의 영문 대소문자 상태를 건드리지 않게 막는다.
+	if ev.Code == KEY_CAPSLOCK {
+		if d.korean && !d.ctrl_or_alt {
+			return
+		}
+		d.passthrough(ev)
 		return
 	}
 
@@ -2837,7 +2882,7 @@ func (d *Daemon) run(preferredPath string) error {
 	if err := d.reinitializeOutputLayoutForCurrentMode(); err != nil {
 		return fmt.Errorf("initial output layout reinit: %w", err)
 	}
-	log.Println("모드: 한글 (CapsLock으로 전환)")
+	log.Println("모드: 한글 (Shift+Space 또는 Right Alt로 전환)")
 	d.outputCh = make(chan outputJob, 1024)
 	d.outputResultCh = make(chan outputResult, 1024)
 	d.outputStopCh = make(chan struct{})
