@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
 import BluetoothPowerControl from "@/components/BluetoothPowerControl";
+import DiagnosisPanel from "@/components/DiagnosisPanel";
 import KeyboardSwapControl from "@/components/KeyboardSwapControl";
 import SectionDivider from "@/components/SectionDivider";
 import StatusCheck from "@/components/StatusCheck";
@@ -17,6 +18,16 @@ interface VerifyResult {
   detail: string;
 }
 
+function getInstallSummary(installHangul: boolean, installBtKeyboard: boolean): string {
+  if (installHangul && installBtKeyboard) {
+    return "한글 입력과 블루투스 설치를 확인합니다.";
+  }
+  if (installHangul) {
+    return "한글 입력 설정을 확인합니다.";
+  }
+  return "블루투스 설치를 확인합니다.";
+}
+
 export default function CompletePage() {
   const allowed = useGuard();
   const router = useRouter();
@@ -27,13 +38,11 @@ export default function CompletePage() {
   const [btRemoveResult, setBtRemoveResult] = useState<string | null>(null);
   const [fontUploading, setFontUploading] = useState(false);
   const [fontResult, setFontResult] = useState<string | null>(null);
-  const [diagnosing, setDiagnosing] = useState(false);
-  const [diagResult, setDiagResult] = useState<Record<string, string> | null>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
 
   const placeholderChecks = [
-    "한글 폰트",
-    ...(state.installBtKeyboard ? ["BT 데몬", "블루투스"] : []),
+    ...(state.installHangul ? ["한글 폰트", "한글 입력 데몬"] : []),
+    ...(state.installBtKeyboard ? ["블루투스"] : []),
   ];
 
   useEffect(() => {
@@ -46,6 +55,7 @@ export default function CompletePage() {
           body: JSON.stringify({
             ip: state.ip,
             password: state.password,
+            hangul: state.installHangul,
             bt: state.installBtKeyboard,
           }),
         });
@@ -62,7 +72,7 @@ export default function CompletePage() {
       }
     };
     verify();
-  }, [allowed, state.installBtKeyboard, state.ip, state.password]);
+  }, [allowed, state.installBtKeyboard, state.installHangul, state.ip, state.password]);
 
   const handleBtRemove = useCallback(
     async (address: string) => {
@@ -126,6 +136,10 @@ export default function CompletePage() {
 
   const allPassed = results.length > 0 && results.every((r) => r.pass);
   const hasFail = results.length > 0 && results.some((r) => !r.pass);
+  const failedCheckNames = results.filter((r) => !r.pass).map((r) => r.name);
+  const hasHangulFail = failedCheckNames.some((name) => name === "한글 폰트" || name === "한글 입력 데몬");
+  const hasBtFail = failedCheckNames.includes("블루투스");
+  const returnPath = state.ip && state.password ? "/entry" : "/";
 
   if (!allowed) return null;
 
@@ -145,7 +159,7 @@ export default function CompletePage() {
             className="mt-3 text-[17px]"
             style={{ color: "var(--text-muted)" }}
           >
-            한글 입력 설정을 확인합니다.
+            {getInstallSummary(state.installHangul, state.installBtKeyboard)}
           </p>
         </div>
 
@@ -180,7 +194,9 @@ export default function CompletePage() {
               설치가 완료되었습니다
             </p>
             <p className="text-[15px] mt-2" style={{ color: "var(--text-muted)" }}>
-              지구본 아이콘을 눌러 Korean을 선택하세요.
+              {state.installHangul
+                ? "지구본 아이콘을 눌러 Korean을 선택하세요."
+                : "블루투스 키보드 페어링을 진행하면 바로 사용할 수 있습니다."}
             </p>
           </div>
         )}
@@ -195,9 +211,19 @@ export default function CompletePage() {
               일부 항목에서 문제가 발견되었습니다
             </p>
             <ul className="mt-3 space-y-1.5 text-[15px]" style={{ color: "var(--text-muted)" }}>
-              <li>폰트 문제 시 기기 재시작</li>
-              <li>데몬 문제 시 <code className="text-[13px] font-mono px-2 py-1 rounded-md" style={{ backgroundColor: "var(--terminal-bg)", color: "var(--terminal-text)" }}>systemctl restart hangul-daemon</code></li>
-              <li>&quot;처음으로&quot;를 눌러 재설치</li>
+              {hasHangulFail && (
+                <li>한글 입력 문제가 있으면 기기를 재시작한 뒤 다시 확인하세요.</li>
+              )}
+              {hasHangulFail && (
+                <li>데몬 문제 시 <code className="text-[13px] font-mono px-2 py-1 rounded-md" style={{ backgroundColor: "var(--terminal-bg)", color: "var(--terminal-text)" }}>systemctl restart hangul-daemon</code></li>
+              )}
+              {hasBtFail && (
+                <li>블루투스 설치 문제가 있으면 기기를 재시작한 뒤 다시 확인하세요.</li>
+              )}
+              {hasBtFail && (
+                <li>스캔을 건너뛰었다면, 설치만 완료된 상태일 수 있으니 이후 페어링 화면에서 다시 연결하면 됩니다.</li>
+              )}
+              <li>&quot;처음으로&quot;를 눌러 {state.installHangul ? "설치" : "블루투스 설치"}를 다시 적용하세요.</li>
             </ul>
           </div>
         )}
@@ -206,131 +232,113 @@ export default function CompletePage() {
         {/* 관리 섹션 */}
         {!verifying && (
           <div className="space-y-8 pt-4">
-            <div className="space-y-4 animate-fade-in-up stagger-1">
-              <SectionDivider label="키보드" />
-              <KeyboardSwapControl ip={state.ip} password={state.password} />
-            </div>
+            {state.installHangul && (
+              <div className="space-y-4 animate-fade-in-up stagger-1">
+                <SectionDivider label="키보드" />
+                <KeyboardSwapControl ip={state.ip} password={state.password} />
+              </div>
+            )}
 
             {/* 블루투스 관리 */}
-            <div className="space-y-4 animate-fade-in-up stagger-2">
-              <SectionDivider label="블루투스" />
+            {state.installBtKeyboard && (
+              <div className="space-y-4 animate-fade-in-up stagger-2">
+                <SectionDivider label="블루투스" />
 
-              {state.btDeviceName && (
                 <div className="flex items-center justify-between py-2">
-                  <span className="text-[16px]" style={{ color: "var(--text-secondary)" }}>
-                    {state.btDeviceName}
-                  </span>
+                  <div>
+                    <p className="text-[16px] font-medium" style={{ color: "var(--text-primary)" }}>
+                      블루투스 키보드 재설정
+                    </p>
+                    <p className="text-[14px] mt-1" style={{ color: "var(--text-muted)" }}>
+                      스캔을 건너뛰었거나 다른 키보드를 연결하려면 여기서 다시 페어링하세요.
+                    </p>
+                  </div>
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     size="sm"
-                    onClick={() => state.btDeviceAddress && handleBtRemove(state.btDeviceAddress)}
-                    loading={btRemoving}
+                    onClick={() => router.push("/bluetooth?mode=manage")}
                   >
-                    해제
+                    열기
                   </Button>
                 </div>
-              )}
-              {btRemoveResult && (
-                <p className="text-[14px]" style={{ color: btRemoveResult.includes("실패") ? "var(--error)" : "var(--success)" }}>
-                  {btRemoveResult}
-                </p>
-              )}
 
-              <BluetoothPowerControl ip={state.ip} password={state.password} />
-            </div>
+                {state.btDeviceName && (
+                  <div className="flex items-center justify-between py-2">
+                    <span className="text-[16px]" style={{ color: "var(--text-secondary)" }}>
+                      {state.btDeviceName}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => state.btDeviceAddress && handleBtRemove(state.btDeviceAddress)}
+                      loading={btRemoving}
+                    >
+                      해제
+                    </Button>
+                  </div>
+                )}
+                {btRemoveResult && (
+                  <p className="text-[14px]" style={{ color: btRemoveResult.includes("실패") ? "var(--error)" : "var(--success)" }}>
+                    {btRemoveResult}
+                  </p>
+                )}
+
+                <BluetoothPowerControl ip={state.ip} password={state.password} />
+              </div>
+            )}
 
             {/* 폰트 교체 */}
-            <div className="space-y-4 animate-fade-in-up stagger-3">
-              <SectionDivider label="폰트 교체" />
-              <div className="flex items-center justify-between py-2">
-                <span className="text-[16px]" style={{ color: "var(--text-muted)" }}>
-                  OTF/TTF 파일 업로드
-                </span>
-                <input
-                  ref={fontInputRef}
-                  type="file"
-                  accept=".otf,.ttf"
-                  onChange={handleFontUpload}
-                  className="hidden"
-                  id="font-upload"
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => fontInputRef.current?.click()}
-                  loading={fontUploading}
-                >
-                  {fontUploading ? "업로드 중..." : "선택"}
-                </Button>
+            {state.installHangul && (
+              <div className="space-y-4 animate-fade-in-up stagger-3">
+                <SectionDivider label="폰트 교체" />
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-[16px]" style={{ color: "var(--text-muted)" }}>
+                    OTF/TTF 파일 업로드
+                  </span>
+                  <input
+                    ref={fontInputRef}
+                    type="file"
+                    accept=".otf,.ttf"
+                    onChange={handleFontUpload}
+                    className="hidden"
+                    id="font-upload"
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => fontInputRef.current?.click()}
+                    loading={fontUploading}
+                  >
+                    {fontUploading ? "업로드 중..." : "선택"}
+                  </Button>
+                </div>
+                {fontResult && (
+                  <p className="text-[14px]" style={{ color: fontResult.includes("실패") ? "var(--error)" : "var(--success)" }}>
+                    {fontResult}
+                  </p>
+                )}
               </div>
-              {fontResult && (
-                <p className="text-[14px]" style={{ color: fontResult.includes("실패") ? "var(--error)" : "var(--success)" }}>
-                  {fontResult}
-                </p>
-              )}
-            </div>
+            )}
 
             {/* 진단 */}
-            <div className="space-y-4 animate-fade-in-up stagger-4">
-              <SectionDivider label="진단" />
-              <div className="flex items-center justify-between py-2">
-                <span className="text-[16px]" style={{ color: "var(--text-muted)" }}>
-                  키보드 문제 진단
-                </span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={async () => {
-                    setDiagnosing(true);
-                    setDiagResult(null);
-                    try {
-                      const res = await fetch("/api/diagnose", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ ip: state.ip, password: state.password }),
-                      });
-                      const data = await res.json();
-                      setDiagResult(data.results);
-                    } catch {
-                      setDiagResult({ error: "서버 오류" });
-                    } finally {
-                      setDiagnosing(false);
-                    }
-                  }}
-                  loading={diagnosing}
-                >
-                  실행
-                </Button>
-              </div>
-              {diagResult && (
-                <div
-                  className="p-4 rounded-xl overflow-auto text-[12px] font-mono leading-[20px]"
-                  style={{
-                    background: "linear-gradient(180deg, #1a1a2e 0%, #16213e 100%)",
-                    color: "var(--terminal-text)",
-                    maxHeight: "400px",
-                  }}
-                >
-                  {Object.entries(diagResult).map(([key, value]) => (
-                    <div key={key} className="mb-3">
-                      <div style={{ color: "#818cf8" }}>--- {key} ---</div>
-                      <pre className="whitespace-pre-wrap break-all">{value}</pre>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <DiagnosisPanel
+              ip={state.ip}
+              password={state.password}
+              title="진단"
+              subtitle="키보드 문제 진단"
+              className="animate-fade-in-up stagger-4"
+            />
 
           </div>
         )}
 
         {/* 네비게이션 */}
         <div className="flex justify-between pt-4">
-          <Button variant="secondary" onClick={() => router.push("/")} disabled={verifying}>
+          <Button variant="secondary" onClick={() => router.push(returnPath)} disabled={verifying}>
             처음으로
           </Button>
           <Button onClick={() => router.push("/manage")} disabled={verifying} size="lg">
-            설정 변경
+            기기 관리
           </Button>
         </div>
       </div>

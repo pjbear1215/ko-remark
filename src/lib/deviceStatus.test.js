@@ -10,29 +10,26 @@ import {
 } from "./deviceStatus.js";
 
 test("deriveRuntimeState returns the expected merged state", () => {
-  assert.equal(deriveRuntimeState({ installKeypad: false, installBt: false }), "clean");
-  assert.equal(deriveRuntimeState({ installKeypad: true, installBt: false }), "keypad_only");
-  assert.equal(deriveRuntimeState({ installKeypad: false, installBt: true }), "bt_only");
-  assert.equal(deriveRuntimeState({ installKeypad: true, installBt: true }), "both");
+  assert.equal(deriveRuntimeState({ hasHangulRuntime: false, hasBtConfig: false }), "clean");
+  assert.equal(deriveRuntimeState({ hasHangulRuntime: true, hasBtConfig: false }), "hangul");
+  assert.equal(deriveRuntimeState({ hasHangulRuntime: false, hasBtConfig: true }), "bt");
+  assert.equal(deriveRuntimeState({ hasHangulRuntime: true, hasBtConfig: true }), "hangul_bt");
 });
 
-test("getSafetyStatus marks keypad without backups as recovery risk", () => {
+test("getSafetyStatus marks supported connected devices as safe", () => {
   const status = getSafetyStatus({
     connected: true,
-    runtimeState: "both",
-    hasHomeBackup: false,
-    hasOptBackup: false,
+    runtimeState: "hangul",
   });
 
-  assert.equal(status.tone, "danger");
-  assert.equal(status.label, "복구 차단 상태");
+  assert.equal(status.tone, "safe");
+  assert.equal(status.label, "보증 영향 낮음");
 });
 
 test("getRecommendedAction points clean devices to the safe install flow", () => {
   const action = getRecommendedAction({
     connected: true,
     runtimeState: "clean",
-    hasRecoveryRisk: false,
   });
 
   assert.equal(action.id, "safe-install");
@@ -42,10 +39,8 @@ test("getRecommendedAction points clean devices to the safe install flow", () =>
 test("buildFailureRoutines returns BT guidance when BT checks fail", () => {
   const routines = buildFailureRoutines({
     connected: true,
-    runtimeState: "bt_only",
-    hasRecoveryRisk: false,
     checks: [
-      { id: "bt-daemon", pass: false },
+      { id: "bt-config", pass: false },
     ],
   });
 
@@ -55,7 +50,7 @@ test("buildFailureRoutines returns BT guidance when BT checks fail", () => {
 test("buildOperationTimeline reflects update readiness", () => {
   const timeline = buildOperationTimeline({
     connected: true,
-    runtimeState: "both",
+    runtimeState: "hangul_bt",
     checks: [
       { id: "reboot-ready", pass: true },
       { id: "inactive-slot", pass: false },

@@ -1,0 +1,14 @@
+[Unit]
+Description=Restore ReKoIt runtime after firmware update
+After=home.mount
+Wants=home.mount
+Before=xochitl.service
+ConditionPathExists=/home/root/rekoit/restore.sh
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh /home/root/rekoit/restore.sh
+
+[Install]
+WantedBy=multi-user.target

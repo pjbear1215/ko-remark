@@ -39,7 +39,7 @@ function persistBluetoothPowerState(
         "ConnectTimeout=20",
         `root@${session.ip}`,
         `
-STATE_FILE="/home/root/bt-keyboard/install-state.conf"
+STATE_FILE="/home/root/rekoit/install-state.conf"
 if [ -f "$STATE_FILE" ]; then
   if grep -q '^BLUETOOTH_POWER_ON=' "$STATE_FILE" 2>/dev/null; then
     sed -i 's/^BLUETOOTH_POWER_ON=.*/BLUETOOTH_POWER_ON=${value}/' "$STATE_FILE" 2>/dev/null || true
@@ -47,6 +47,55 @@ if [ -f "$STATE_FILE" ]; then
     printf '\nBLUETOOTH_POWER_ON=${value}\n' >> "$STATE_FILE"
   fi
 fi
+        `,
+      ],
+      { env },
+    );
+    proc.on("close", () => resolve());
+    proc.on("error", () => resolve());
+  });
+}
+
+function persistBluetoothDeviceAddress(
+  session: { ip: string; password: string },
+  address: string,
+): Promise<void> {
+  if (!/^[0-9A-Fa-f:]+$/.test(address)) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const env = {
+      ...process.env,
+      SSHPASS: session.password,
+      PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin`,
+    };
+    const proc = spawn(
+      "sshpass",
+      [
+        "-e",
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=20",
+        `root@${session.ip}`,
+        `
+STATE_FILE="/home/root/rekoit/install-state.conf"
+mkdir -p /home/root/rekoit
+INSTALL_HANGUL=0
+INSTALL_BT=0
+BLUETOOTH_POWER_ON=0
+SWAP_LEFT_CTRL_CAPSLOCK=0
+BT_DEVICE_ADDRESS=""
+KEYBOARD_LOCALES=""
+if [ -f "$STATE_FILE" ]; then
+  . "$STATE_FILE"
+fi
+BT_DEVICE_ADDRESS=${address}
+printf 'INSTALL_HANGUL=%s\nINSTALL_BT=%s\nBLUETOOTH_POWER_ON=%s\nSWAP_LEFT_CTRL_CAPSLOCK=%s\nBT_DEVICE_ADDRESS=%s\nKEYBOARD_LOCALES=%s\n' "\${INSTALL_HANGUL:-0}" "\${INSTALL_BT:-0}" "\${BLUETOOTH_POWER_ON:-0}" "\${SWAP_LEFT_CTRL_CAPSLOCK:-0}" "$BT_DEVICE_ADDRESS" "\${KEYBOARD_LOCALES:-}" > "$STATE_FILE"
         `,
       ],
       { env },
@@ -180,8 +229,9 @@ export async function GET(request: NextRequest): Promise<Response> {
           });
 
           await persistBluetoothPowerState(session, "1");
+          await persistBluetoothDeviceAddress(session, readyAddress);
           send("log", { line: `ALREADY_PAIRED: ${readyAddress}` });
-          send("paired", { success: true });
+          send("paired", { success: true, address: readyAddress });
           send("complete", {});
           return;
         }
@@ -238,6 +288,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         let pairResultSent = false;
         let pairStarted = false;
         let persistPowerOnAfterProcess = false;
+        let resolvedAddress = address;
 
         const handleChunk = (data: Buffer, source: "stdout" | "stderr"): void => {
           const output = data.toString();
@@ -270,6 +321,13 @@ export async function GET(request: NextRequest): Promise<Response> {
               });
             }
 
+            if (stripped.startsWith("PAIRED_ADDR:")) {
+              const pairedAddress = stripped.replace("PAIRED_ADDR:", "").trim();
+              if (pairedAddress) {
+                resolvedAddress = pairedAddress;
+              }
+            }
+
             // 패스키 감지
             if (!passkeySent) {
               const displayedPasskey = extractDisplayedPasskey(stripped);
@@ -290,7 +348,8 @@ export async function GET(request: NextRequest): Promise<Response> {
               ) {
                 pairResultSent = true;
                 persistPowerOnAfterProcess = true;
-                send("paired", { success: true });
+                void persistBluetoothDeviceAddress(session, resolvedAddress);
+                send("paired", { success: true, address: resolvedAddress });
               }
             }
 
@@ -420,9 +479,40 @@ export async function GET(request: NextRequest): Promise<Response> {
           }
 
           if (shouldTreatPairingAttemptAsSuccess(finalInfoStatus)) {
+            if (name) {
+              const devicesProc = spawn(
+                "sshpass",
+                [
+                  "-e",
+                  "ssh",
+                  "-o",
+                  "StrictHostKeyChecking=no",
+                  "-o",
+                  "UserKnownHostsFile=/dev/null",
+                  "-o",
+                  "ConnectTimeout=20",
+                  `root@${session.ip}`,
+                  "bluetoothctl devices || true",
+                ],
+                { env },
+              );
+              let devicesOutput = "";
+              await new Promise<void>((resolve) => {
+                devicesProc.stdout.on("data", (data: Buffer) => {
+                  devicesOutput += data.toString();
+                });
+                devicesProc.on("close", () => resolve());
+                devicesProc.on("error", () => resolve());
+              });
+              const latestAddress = extractLatestMatchingDeviceAddress(devicesOutput, name);
+              if (latestAddress) {
+                resolvedAddress = latestAddress;
+              }
+            }
             await persistBluetoothPowerState(session, "1");
+            await persistBluetoothDeviceAddress(session, resolvedAddress);
             pairResultSent = true;
-            send("paired", { success: true });
+            send("paired", { success: true, address: resolvedAddress });
           } else {
             const journalProc = spawn(
               "sshpass",
@@ -460,6 +550,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
         if (persistPowerOnAfterProcess) {
           await persistBluetoothPowerState(session, "1");
+          await persistBluetoothDeviceAddress(session, resolvedAddress);
         }
 
         send("complete", {});

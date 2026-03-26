@@ -110,7 +110,7 @@ const (
 	maxKeyCode             = KEY_CAPSLOCK
 	invalidIndex8          = int8(-1)
 	debugLogging           = false
-	installStatePath       = "/home/root/bt-keyboard/install-state.conf"
+	installStatePath       = "/home/root/rekoit/install-state.conf"
 	minIdleFlushDelay      = 100 * time.Millisecond
 	maxIdleFlushDelay      = 260 * time.Millisecond
 	adaptiveMinKeyGap      = 40 * time.Millisecond
@@ -118,6 +118,7 @@ const (
 	virtualKeyboardName    = "Hangul Virtual Keyboard"
 	uinputReadyTimeout     = 1500 * time.Millisecond
 	maxOutputBatchJobs     = 64
+	bluetoothBusType       = "0005"
 )
 
 // uinput 구조체
@@ -964,6 +965,10 @@ type Daemon struct {
 	renderReleaseSlots   []int
 	layoutActive   bool
 	lruUseTick     uint64
+}
+
+func isBluetoothKeyboardDevice(info DeviceInfo) bool {
+	return info.BusType == bluetoothBusType
 }
 
 func ioctl(fd uintptr, request uintptr, arg uintptr) error {
@@ -2945,13 +2950,18 @@ func (d *Daemon) run(preferredPath string) error {
 			if msg.Err != nil {
 				if _, ok := d.inputs[msg.Path]; ok {
 					log.Printf("입력 장치 오류: %v", msg.Err)
-					if err := d.commitCurrent(); err != nil {
-						log.Printf("[OUTPUT] commit current failed during input removal: %v", err)
-					}
-					d.removeInputDeviceLocked(msg.Path)
-					if len(d.inputs) == 0 && d.layoutActive {
-						if err := d.restoreOutputLayout(); err != nil {
-							log.Printf("입력 장치 없음: 출력 레이아웃 복원 실패: %v", err)
+					info := d.inputs[msg.Path].Info
+					if isBluetoothKeyboardDevice(info) {
+						log.Printf("블루투스 입력 장치 재열거 대기: %s (%s)", info.Path, info.Name)
+					} else {
+						if err := d.commitCurrent(); err != nil {
+							log.Printf("[OUTPUT] commit current failed during input removal: %v", err)
+						}
+						d.removeInputDeviceLocked(msg.Path)
+						if len(d.inputs) == 0 && d.layoutActive {
+							if err := d.restoreOutputLayout(); err != nil {
+								log.Printf("입력 장치 없음: 출력 레이아웃 복원 실패: %v", err)
+							}
 						}
 					}
 				}

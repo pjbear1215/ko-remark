@@ -66,8 +66,6 @@ bluetoothctl disconnect ${escapedAddress} 2>/dev/null || true
 bluetoothctl untrust ${escapedAddress} 2>/dev/null || true
 bluetoothctl remove ${escapedAddress} 2>/dev/null || true
 rm -rf /var/lib/bluetooth/*/${escapedAddress} 2>/dev/null || true
-systemctl restart bluetooth 2>/dev/null || true
-sleep 3
 `;
 }
 
@@ -81,32 +79,43 @@ DEVICE_NAME="${escapedName}"
 
 ${buildStaleDeviceRemovalScript({ address, name })}
 
+if [ -n "$DEVICE_NAME" ]; then
+  bluetoothctl devices 2>/dev/null | while read -r _ STALE_ADDR STALE_NAME; do
+    [ -n "$STALE_ADDR" ] || continue
+    [ "$STALE_NAME" = "$DEVICE_NAME" ] || continue
+    bluetoothctl disconnect "$STALE_ADDR" 2>/dev/null || true
+    bluetoothctl untrust "$STALE_ADDR" 2>/dev/null || true
+    bluetoothctl remove "$STALE_ADDR" 2>/dev/null || true
+    rm -rf /var/lib/bluetooth/*/"$STALE_ADDR" 2>/dev/null || true
+  done
+fi
+
 echo "SCANNING..."
 bluetoothctl power on 2>/dev/null || true
 bluetoothctl pairable on 2>/dev/null || true
-SCAN_OUT=$(bluetoothctl --timeout 15 scan on 2>&1)
-echo "$SCAN_OUT"
-OBSERVED_ADDRS=$(printf '%s\n' "$SCAN_OUT" | awk '/Device [0-9A-F:]+/ {print $3}' | sort -u)
+INFO=$(bluetoothctl info "$ADDR" 2>&1)
 FOUND=0
-if [ -n "$DEVICE_NAME" ] && [ -n "$OBSERVED_ADDRS" ]; then
-  for CANDIDATE_ADDR in $OBSERVED_ADDRS; do
-    CANDIDATE_INFO=$(bluetoothctl info "$CANDIDATE_ADDR" 2>&1)
-    CANDIDATE_NAME=$(printf '%s\n' "$CANDIDATE_INFO" | sed -n 's/^[[:space:]]*Name: //p' | head -n 1)
-    CANDIDATE_ALIAS=$(printf '%s\n' "$CANDIDATE_INFO" | sed -n 's/^[[:space:]]*Alias: //p' | head -n 1)
-    if [ "$CANDIDATE_NAME" = "$DEVICE_NAME" ] || [ "$CANDIDATE_ALIAS" = "$DEVICE_NAME" ]; then
-      ADDR="$CANDIDATE_ADDR"
-      FOUND=1
-      break
-    fi
-  done
-fi
+case "$INFO" in
+  *Name:*|*RSSI:*)
+    FOUND=1
+    ;;
+esac
 if [ "$FOUND" -eq 0 ]; then
-  INFO=$(bluetoothctl info "$ADDR" 2>&1)
-  case "$INFO" in
-    *Name:*|*RSSI:*)
-      FOUND=1
-      ;;
-  esac
+  SCAN_OUT=$(bluetoothctl --timeout 6 scan on 2>&1)
+  echo "$SCAN_OUT"
+  OBSERVED_ADDRS=$(printf '%s\n' "$SCAN_OUT" | awk '/Device [0-9A-F:]+/ {print $3}' | sort -u)
+  if [ -n "$DEVICE_NAME" ] && [ -n "$OBSERVED_ADDRS" ]; then
+    for CANDIDATE_ADDR in $OBSERVED_ADDRS; do
+      CANDIDATE_INFO=$(bluetoothctl info "$CANDIDATE_ADDR" 2>&1)
+      CANDIDATE_NAME=$(printf '%s\n' "$CANDIDATE_INFO" | sed -n 's/^[[:space:]]*Name: //p' | head -n 1)
+      CANDIDATE_ALIAS=$(printf '%s\n' "$CANDIDATE_INFO" | sed -n 's/^[[:space:]]*Alias: //p' | head -n 1)
+      if [ "$CANDIDATE_NAME" = "$DEVICE_NAME" ] || [ "$CANDIDATE_ALIAS" = "$DEVICE_NAME" ]; then
+        ADDR="$CANDIDATE_ADDR"
+        FOUND=1
+        break
+      fi
+    done
+  fi
 fi
 if [ "$FOUND" -eq 0 ]; then
   echo "DEVICE_NOT_FOUND: $ADDR"
@@ -139,19 +148,19 @@ send_cmd() {
 }
 
 echo "INTERACTIVE_START"
-sleep 1
+sleep 0.2
 send_cmd "pairable on"
-sleep 0.3
+sleep 0.2
 send_cmd "agent off"
-sleep 0.3
+sleep 0.2
 send_cmd "agent KeyboardDisplay"
-sleep 0.3
+sleep 0.2
 send_cmd "default-agent"
-sleep 0.4
+sleep 0.2
 send_cmd "disconnect $ADDR"
-sleep 0.4
+sleep 0.2
 send_cmd "untrust $ADDR"
-sleep 0.8
+sleep 0.3
 send_cmd "pair $ADDR"
 
 PAIRED=0
@@ -186,8 +195,10 @@ if [ "$PAIRED" -eq 1 ]; then
     esac
   done
   if [ "$READY" -eq 1 ]; then
+    echo "PAIRED_ADDR:$ADDR"
     echo "PAIR_SUCCESS"
   else
+    echo "PAIRED_ADDR:$ADDR"
     echo "PAIR_PARTIAL"
   fi
 else

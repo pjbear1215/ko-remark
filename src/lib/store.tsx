@@ -8,6 +8,7 @@ interface SetupState {
   password: string;
   connected: boolean;
   eulaAgreed: boolean;
+  installHangul: boolean;
   installBtKeyboard: boolean;
   swapLeftCtrlCapsLock: boolean;
   btDeviceAddress: string;
@@ -74,6 +75,7 @@ const defaultState: SetupState = {
   password: "",
   connected: false,
   eulaAgreed: false,
+  installHangul: true,
   installBtKeyboard: false,
   swapLeftCtrlCapsLock: false,
   btDeviceAddress: "",

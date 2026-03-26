@@ -25,17 +25,6 @@ type PairStatus =
   | "paired"
   | "failed";
 
-function isKeyboardDevice(device: BtDevice): boolean {
-  if (!device.icon) return false;
-  return device.icon.includes("keyboard") || device.icon.includes("input-keyboard");
-}
-
-function isLikelyKeyboard(device: BtDevice): boolean {
-  if (isKeyboardDevice(device)) return true;
-  const name = device.name.toLowerCase();
-  return name.includes("keyboard") || name.includes("keys") || name.includes("keychron") || name.includes("hhkb") || name.includes("magic keyboard") || name.includes("k380") || name.includes("k780") || name.includes("mx keys");
-}
-
 export default function BluetoothPage() {
   const allowed = useGuard();
   const router = useRouter();
@@ -94,7 +83,7 @@ export default function BluetoothPage() {
         es.close();
         setScanStatus("scanned");
       }
-    }, 50000);
+    }, 22000);
 
     es.addEventListener("log", (e) => {
       const data = JSON.parse(e.data);
@@ -133,8 +122,13 @@ export default function BluetoothPage() {
     };
   };
 
-  const startPair = async () => {
-    if (!selectedDevice) return;
+  const startPair = async (device?: BtDevice) => {
+    const targetDevice = device ?? selectedDevice;
+    if (!targetDevice) return;
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    setSelectedDevice(targetDevice);
+    setScanStatus("scanned");
     setPhase("pair");
     setPairStatus("pairing");
     setPasskey("");
@@ -151,8 +145,8 @@ export default function BluetoothPage() {
     }
 
     const params = new URLSearchParams({
-      address: selectedDevice.address,
-      name: selectedDevice.name,
+      address: targetDevice.address,
+      name: targetDevice.name,
     });
 
     const es = new EventSource(`/api/bluetooth/pair?${params}`);
@@ -192,11 +186,13 @@ export default function BluetoothPage() {
       if (pairTimeoutRef.current) clearTimeout(pairTimeoutRef.current);
       const data = JSON.parse(e.data);
       if (data.success) {
+        const pairedAddress =
+          typeof data.address === "string" && data.address ? data.address : targetDevice.address;
         setState({
-          btDeviceAddress: selectedDevice.address,
-          btDeviceName: selectedDevice.name,
+          btDeviceAddress: pairedAddress,
+          btDeviceName: targetDevice.name,
         });
-        setPairSuccessName(selectedDevice.name);
+        setPairSuccessName(targetDevice.name);
         setPairStatus("paired");
       } else {
         setPairStatus("failed");
@@ -338,7 +334,7 @@ export default function BluetoothPage() {
             style={{ color: "var(--text-muted)" }}
           >
             {isManageMode
-              ? "페어링 모드로 전환한 뒤 다시 검색하고 연결을 바꿀 수 있습니다."
+              ? "주변에 광고 중인 기기를 바로 선택해 다시 연결을 바꿀 수 있습니다."
               : "키보드를 페어링 모드로 설정한 후 검색하세요."}
           </p>
         </div>
@@ -382,9 +378,8 @@ export default function BluetoothPage() {
               </p>
             )}
 
-            {/* 키보드 목록 */}
+            {/* 기기 목록 */}
             {devices.length > 0 && (() => {
-              const keyboards = devices.filter(isLikelyKeyboard);
               return (
                 <div className="space-y-4">
                   <span
@@ -397,97 +392,67 @@ export default function BluetoothPage() {
                       border: "1px solid var(--border-light)",
                     }}
                   >
-                    키보드 ({keyboards.length})
+                    기기 ({devices.length})
                   </span>
 
                   <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-                    같은 이름이 여러 개 보이면 키보드의 다른 블루투스 프로파일일 수 있습니다. 지금 기기에서 사용하려는 주소를 선택하세요.
+                    광고가 보이는 기기는 바로 추가됩니다. 사용하려는 기기를 누르면 즉시 스캔을 멈추고 페어링을 시작합니다.
                   </p>
 
-                  {keyboards.length === 0 ? (
-                    <div
-                      className="py-8 text-center rounded-xl"
-                      style={{ backgroundColor: "var(--bg-secondary)" }}
-                    >
-                      <p className="text-[16px]" style={{ color: "var(--text-muted)" }}>
-                        {devices.length}개 기기가 발견되었지만 키보드가 없습니다.
-                      </p>
-                      <p className="text-[14px] mt-2" style={{ color: "var(--text-muted)" }}>
-                        키보드를 페어링 모드로 설정한 후 다시 스캔하세요.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {keyboards.map((device) => (
-                        <button
-                          key={device.address}
-                          onClick={() => setSelectedDevice(device)}
-                          className="w-full text-left py-5 px-6 rounded-xl transition-all card-interactive"
-                          style={{
-                            backgroundColor:
-                              selectedDevice?.address === device.address
-                                ? "var(--bg-card)"
-                                : "transparent",
-                            border: selectedDevice?.address === device.address
-                              ? "2px solid var(--accent)"
-                              : "2px solid var(--border-light)",
-                          }}
-                        >
-                          <div className="flex items-center gap-4">
-                            {/* 키보드 아이콘 */}
-                            <svg
-                              width="22"
-                              height="22"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              style={{
-                                color: selectedDevice?.address === device.address
-                                  ? "var(--accent)"
-                                  : "var(--text-muted)",
-                                flexShrink: 0,
-                              }}
-                            >
-                              <rect x="2" y="4" width="20" height="16" rx="2" ry="2" />
-                              <line x1="6" y1="8" x2="6.01" y2="8" />
-                              <line x1="10" y1="8" x2="10.01" y2="8" />
-                              <line x1="14" y1="8" x2="14.01" y2="8" />
-                              <line x1="18" y1="8" x2="18.01" y2="8" />
-                              <line x1="6" y1="12" x2="6.01" y2="12" />
-                              <line x1="18" y1="12" x2="18.01" y2="12" />
-                              <line x1="8" y1="16" x2="16" y2="16" />
-                            </svg>
-                            <div className="min-w-0 flex-1">
-                              <span className="text-[18px] font-semibold block" style={{ color: "var(--text-primary)" }}>
-                                {device.name}
-                              </span>
-                              <span className="text-[12px] font-mono mt-1 block" style={{ color: "var(--text-muted)" }}>
-                                {device.address}
-                              </span>
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {selectedDevice && keyboards.some((d) => d.address === selectedDevice.address) && (
-                    <div className="flex gap-3 pt-2">
-                      <Button onClick={startPair} className="flex-1" size="lg">
-                        페어링
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleRemoveDevice(selectedDevice.address)}
-                        loading={removing}
+                  <div className="space-y-3">
+                    {devices.map((device) => (
+                      <button
+                        key={device.address}
+                        onClick={() => { void startPair(device); }}
+                        className="w-full text-left py-5 px-6 rounded-xl transition-all card-interactive"
+                        style={{
+                          backgroundColor:
+                            selectedDevice?.address === device.address
+                              ? "var(--bg-card)"
+                              : "transparent",
+                          border: selectedDevice?.address === device.address
+                            ? "2px solid var(--accent)"
+                            : "2px solid var(--border-light)",
+                        }}
                       >
-                        해제
-                      </Button>
-                    </div>
-                  )}
+                        <div className="flex items-center gap-4">
+                          <svg
+                            width="22"
+                            height="22"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            style={{
+                              color: selectedDevice?.address === device.address
+                                ? "var(--accent)"
+                                : "var(--text-muted)",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <rect x="2" y="4" width="20" height="16" rx="2" ry="2" />
+                            <line x1="6" y1="8" x2="6.01" y2="8" />
+                            <line x1="10" y1="8" x2="10.01" y2="8" />
+                            <line x1="14" y1="8" x2="14.01" y2="8" />
+                            <line x1="18" y1="8" x2="18.01" y2="8" />
+                            <line x1="6" y1="12" x2="6.01" y2="12" />
+                            <line x1="18" y1="12" x2="18.01" y2="12" />
+                            <line x1="8" y1="16" x2="16" y2="16" />
+                          </svg>
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[18px] font-semibold block" style={{ color: "var(--text-primary)" }}>
+                              {device.name}
+                            </span>
+                            <span className="text-[12px] font-mono mt-1 block" style={{ color: "var(--text-muted)" }}>
+                              {device.address}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               );
             })()}
@@ -511,7 +476,7 @@ export default function BluetoothPage() {
             {/* 기기 없음 */}
             {scanStatus === "scanned" && devices.length === 0 && (
               <p className="text-[17px] text-center py-12" style={{ color: "var(--text-muted)" }}>
-                키보드를 찾지 못했습니다. 페어링 모드를 확인하세요.
+                광고 중인 기기를 찾지 못했습니다. 기기를 깨우거나 페어링 모드를 확인하세요.
               </p>
             )}
           </>

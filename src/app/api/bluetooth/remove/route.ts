@@ -71,10 +71,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const removeScript = `
+STATE_FILE="/home/root/rekoit/install-state.conf"
 bluetoothctl disconnect ${address} 2>/dev/null || true
 sleep 1
 bluetoothctl untrust ${address} 2>/dev/null || true
 bluetoothctl remove ${address} 2>/dev/null || true
+if [ -f "$STATE_FILE" ] && grep -q '^BT_DEVICE_ADDRESS=${address}$' "$STATE_FILE" 2>/dev/null; then
+  sed -i 's/^BT_DEVICE_ADDRESS=.*/BT_DEVICE_ADDRESS=/' "$STATE_FILE" 2>/dev/null || true
+fi
 echo "REMOVED:${address}"
 `;
     const output = await runSsh(ip, password, removeScript);

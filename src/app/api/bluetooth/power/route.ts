@@ -49,7 +49,7 @@ function runSsh(
 
 function updateBluetoothPowerStateScript(value: "0" | "1"): string {
   return `
-STATE_FILE="/home/root/bt-keyboard/install-state.conf"
+STATE_FILE="/home/root/rekoit/install-state.conf"
 if [ -f "$STATE_FILE" ]; then
   if grep -q '^BLUETOOTH_POWER_ON=' "$STATE_FILE" 2>/dev/null; then
     sed -i 's/^BLUETOOTH_POWER_ON=.*/BLUETOOTH_POWER_ON=${value}/' "$STATE_FILE" 2>/dev/null || true
@@ -57,6 +57,24 @@ if [ -f "$STATE_FILE" ]; then
     printf '\nBLUETOOTH_POWER_ON=${value}\n' >> "$STATE_FILE"
   fi
 fi
+`;
+}
+
+function listPairedBluetoothDevicesScript(): string {
+  return `
+list_paired_bluetooth_devices() {
+  CANDIDATES=""
+  if printf '%s\n' "\${BT_DEVICE_ADDRESS:-}" | grep -Eq '^[0-9A-F:]{17}$'; then
+    CANDIDATES="$BT_DEVICE_ADDRESS"
+  fi
+  DEVICES=$(bluetoothctl devices Paired 2>/dev/null || true)
+  TRUSTED=$(bluetoothctl devices Trusted 2>/dev/null || true)
+  {
+    printf '%s\n' "$CANDIDATES"
+    printf '%s\n' "$DEVICES"
+    printf '%s\n' "$TRUSTED"
+  } | awk '/^Device [0-9A-F:]+/ {print $2} /^[0-9A-F:]{17}$/ {print $1}' | awk '!seen[$0]++'
+}
 `;
 }
 
@@ -78,6 +96,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     if (action === "on") {
       const script = `
+${listPairedBluetoothDevicesScript()}
+STATE_FILE="/home/root/rekoit/install-state.conf"
+BT_DEVICE_ADDRESS=""
+if [ -f "$STATE_FILE" ]; then
+  . "$STATE_FILE"
+fi
 modprobe btnxpuart 2>/dev/null || true
 systemctl reset-failed bluetooth.service 2>/dev/null || true
 systemctl start bluetooth.service 2>/dev/null || true
@@ -97,6 +121,14 @@ done
 echo "POWERED:$POWERED"
 echo "ACTIVE:$ACTIVE"
 if [ "$ACTIVE" = "active" ] && [ "$POWERED" = "yes" ]; then
+  for addr in $(list_paired_bluetooth_devices); do
+    [ -n "$addr" ] || continue
+    bluetoothctl connect "$addr" 2>/dev/null || true
+    sleep 2
+    if bluetoothctl info "$addr" 2>/dev/null | grep -q 'Connected: yes'; then
+      break
+    fi
+  done
 ${updateBluetoothPowerStateScript("1")}
 fi
 `;

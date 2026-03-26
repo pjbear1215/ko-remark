@@ -56,13 +56,13 @@ export default function WelcomePage() {
             className="text-[36px] font-bold leading-tight"
             style={{ color: "var(--text-primary)" }}
           >
-            ko-remark
+            ReKoIt
           </h1>
           <p
             className="mt-3 text-[17px]"
             style={{ color: "var(--text-muted)" }}
           >
-            USB 연결과 SSH 정보를 확인한 뒤 다음 단계로 진행하세요.
+            reMarkable 한글 입력과 블루투스 설치를 위해 USB 연결과 SSH 정보를 확인하세요.
           </p>
         </div>
 

@@ -58,7 +58,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     const tarData = await sshExec(
       session.ip,
       session.password,
-      "tar czf - -C /home/root bt-keyboard 2>/dev/null",
+      "tar czf - -C /home/root rekoit 2>/dev/null",
     );
 
     const now = new Date();
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     return new Response(new Uint8Array(tarData), {
       headers: {
         "Content-Type": "application/gzip",
-        "Content-Disposition": `attachment; filename="ko-remark-backup_${timestamp}.tar.gz"`,
+        "Content-Disposition": `attachment; filename="rekoit-backup_${timestamp}.tar.gz"`,
         "Content-Length": String(tarData.length),
       },
     });

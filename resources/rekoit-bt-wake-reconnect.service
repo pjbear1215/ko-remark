@@ -1,0 +1,13 @@
+[Unit]
+Description=ReKoIt Bluetooth Wake Reconnect Monitor
+After=bluetooth.service systemd-journald.service
+Requires=bluetooth.service systemd-journald.service
+
+[Service]
+Type=simple
+ExecStart=/bin/sh /home/root/rekoit/bt-wake-reconnect.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -79,8 +79,6 @@ function detectDevice(model: string): "paper-pro" | "paper-pro-move" | null {
 }
 
 function matchesInactiveSlot(runtimeState: string, values: Record<string, string>): boolean {
-  const inactivePatched = values.INACTIVE_PATCHED === "yes";
-  const inactiveHook = values.INACTIVE_HOOK === "yes";
   const inactiveDaemon = values.INACTIVE_DAEMON === "yes";
   const inactiveRestore = values.INACTIVE_RESTORE === "yes";
   const inactiveFactory = values.INACTIVE_FACTORY === "yes";
@@ -88,18 +86,22 @@ function matchesInactiveSlot(runtimeState: string, values: Record<string, string
   const inactiveBtnxpuart = values.INACTIVE_BTNXPUART === "yes";
 
   if (runtimeState === "clean") {
-    return !inactivePatched && !inactiveHook && !inactiveDaemon && !inactiveFactory && !inactiveSwupdate && !inactiveBtnxpuart;
+    return !inactiveDaemon && !inactiveRestore && !inactiveFactory && !inactiveSwupdate && !inactiveBtnxpuart;
   }
 
-  if (runtimeState === "bt_only") {
-    return !inactivePatched && !inactiveHook && inactiveDaemon && inactiveRestore && inactiveFactory && inactiveSwupdate && inactiveBtnxpuart;
+  if (runtimeState === "hangul") {
+    return inactiveDaemon && inactiveRestore && !inactiveFactory && inactiveSwupdate && !inactiveBtnxpuart;
   }
 
-  if (runtimeState === "keypad_only") {
-    return inactivePatched && inactiveHook && !inactiveDaemon && inactiveRestore && inactiveFactory && inactiveSwupdate && !inactiveBtnxpuart;
+  if (runtimeState === "bt") {
+    return !inactiveDaemon && inactiveRestore && inactiveFactory && inactiveSwupdate && inactiveBtnxpuart;
   }
 
-  return inactivePatched && inactiveHook && inactiveDaemon && inactiveRestore && inactiveFactory && inactiveSwupdate && inactiveBtnxpuart;
+  if (runtimeState === "hangul_bt") {
+    return inactiveDaemon && inactiveRestore && inactiveFactory && inactiveSwupdate && inactiveBtnxpuart;
+  }
+
+  return false;
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -121,17 +123,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         echo "FIRMWARE=$(cat /etc/version 2>/dev/null || echo unknown)"
         echo "FREE_SPACE=$(df -h /home | tail -1 | awk '{print $4}')"
         echo "MODEL=$(cat /proc/device-tree/model 2>/dev/null | tr -d '\\000' || echo unknown)"
-        strings /usr/bin/xochitl 2>/dev/null | grep -q "/home/root/.kbds/" && echo "PATCHED_XOCHITL=yes" || echo "PATCHED_XOCHITL=no"
-        systemctl show xochitl -p Environment 2>/dev/null | grep -q "hangul_hook" && echo "HOOK_ENV=yes" || echo "HOOK_ENV=no"
-        [ -d /home/root/.kbds ] && echo "KBDS_COUNT=$(find /home/root/.kbds -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" || echo "KBDS_COUNT=0"
-        BT_ENABLED=$(systemctl is-enabled hangul-daemon 2>/dev/null || echo not-found)
-        BT_ACTIVE=$(systemctl is-active hangul-daemon 2>/dev/null || echo inactive)
-        echo "BT_ENABLED=$BT_ENABLED"
-        echo "BT_ACTIVE=$BT_ACTIVE"
-        [ -f /home/root/bt-keyboard/backup/xochitl.original ] && echo "HOME_BACKUP=yes" || echo "HOME_BACKUP=no"
-        [ -f /opt/bt-keyboard/xochitl.original ] && echo "OPT_BACKUP=yes" || echo "OPT_BACKUP=no"
-        [ -f /etc/systemd/system/hangul-factory-guard.service ] && echo "FACTORY_GUARD=yes" || echo "FACTORY_GUARD=no"
-        [ -f /etc/swupdate/conf.d/99-hangul-postupdate ] && echo "SWUPDATE_HOOK=yes" || echo "SWUPDATE_HOOK=no"
+        HANGUL_ENABLED=$(systemctl is-enabled hangul-daemon 2>/dev/null || echo not-found)
+        HANGUL_ACTIVE=$(systemctl is-active hangul-daemon 2>/dev/null || echo inactive)
+        HANGUL_SERVICE_LINK=$(readlink /etc/systemd/system/hangul-daemon.service 2>/dev/null || true)
+        echo "HANGUL_ENABLED=$HANGUL_ENABLED"
+        echo "HANGUL_ACTIVE=$HANGUL_ACTIVE"
+        if [ -e /etc/systemd/system/hangul-daemon.service ] && [ "$HANGUL_SERVICE_LINK" != "/dev/null" ]; then
+          echo "HANGUL_SERVICE=yes"
+        else
+          echo "HANGUL_SERVICE=no"
+        fi
+        [ -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf ] && echo "HANGUL_FONT=yes" || echo "HANGUL_FONT=no"
+        if [ -f /home/root/rekoit/install-state.conf ]; then
+          . /home/root/rekoit/install-state.conf
+          echo "STATE_INSTALL_HANGUL=\${INSTALL_HANGUL:-}"
+          echo "STATE_INSTALL_BT=\${INSTALL_BT:-0}"
+        else
+          echo "STATE_INSTALL_HANGUL="
+          echo "STATE_INSTALL_BT=0"
+        fi
+        [ -f /etc/systemd/system/rekoit-factory-guard.service ] && echo "FACTORY_GUARD=yes" || echo "FACTORY_GUARD=no"
+        [ -f /etc/swupdate/conf.d/99-rekoit-postupdate ] && echo "SWUPDATE_HOOK=yes" || echo "SWUPDATE_HOOK=no"
         [ -f /etc/modules-load.d/btnxpuart.conf ] && echo "BT_RUNTIME=yes" || echo "BT_RUNTIME=no"
         CURRENT=$(mount | awk '$3=="/" {print $1; exit}')
         case "$CURRENT" in
@@ -147,16 +159,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           mount -o ro "$INACTIVE" /mnt/device_status 2>/dev/null || true
         fi
         if [ -n "$INACTIVE" ] && [ -d /mnt/device_status/etc ]; then
-          strings /mnt/device_status/usr/bin/xochitl 2>/dev/null | grep -q "/home/root/.kbds/" && echo "INACTIVE_PATCHED=yes" || echo "INACTIVE_PATCHED=no"
-          [ -f /mnt/device_status/usr/lib/systemd/system/xochitl.service.d/zz-hangul-hook.conf ] && echo "INACTIVE_HOOK=yes" || echo "INACTIVE_HOOK=no"
-          [ -f /mnt/device_status/etc/systemd/system/hangul-daemon.service ] && echo "INACTIVE_DAEMON=yes" || echo "INACTIVE_DAEMON=no"
-          [ -f /mnt/device_status/etc/systemd/system/hangul-restore.service ] && echo "INACTIVE_RESTORE=yes" || echo "INACTIVE_RESTORE=no"
-          [ -f /mnt/device_status/etc/systemd/system/hangul-factory-guard.service ] && echo "INACTIVE_FACTORY=yes" || echo "INACTIVE_FACTORY=no"
-          [ -f /mnt/device_status/etc/swupdate/conf.d/99-hangul-postupdate ] && echo "INACTIVE_SWUPDATE=yes" || echo "INACTIVE_SWUPDATE=no"
+          INACTIVE_DAEMON_LINK=$(readlink /mnt/device_status/etc/systemd/system/hangul-daemon.service 2>/dev/null || true)
+          if [ -e /mnt/device_status/etc/systemd/system/hangul-daemon.service ] && [ "$INACTIVE_DAEMON_LINK" != "/dev/null" ]; then
+            echo "INACTIVE_DAEMON=yes"
+          else
+            echo "INACTIVE_DAEMON=no"
+          fi
+          [ -f /mnt/device_status/etc/systemd/system/rekoit-restore.service ] && echo "INACTIVE_RESTORE=yes" || echo "INACTIVE_RESTORE=no"
+          [ -f /mnt/device_status/etc/systemd/system/rekoit-factory-guard.service ] && echo "INACTIVE_FACTORY=yes" || echo "INACTIVE_FACTORY=no"
+          [ -f /mnt/device_status/etc/swupdate/conf.d/99-rekoit-postupdate ] && echo "INACTIVE_SWUPDATE=yes" || echo "INACTIVE_SWUPDATE=no"
           [ -f /mnt/device_status/etc/modules-load.d/btnxpuart.conf ] && echo "INACTIVE_BTNXPUART=yes" || echo "INACTIVE_BTNXPUART=no"
         else
-          echo "INACTIVE_PATCHED=no"
-          echo "INACTIVE_HOOK=no"
           echo "INACTIVE_DAEMON=no"
           echo "INACTIVE_RESTORE=no"
           echo "INACTIVE_FACTORY=no"
@@ -169,20 +182,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const values = parseKeyValues(output);
     const detectedDevice = detectDevice(values.MODEL ?? "unknown");
-    const installKeypad = values.PATCHED_XOCHITL === "yes" || values.HOOK_ENV === "yes" || Number(values.KBDS_COUNT ?? "0") > 0;
-    const installBt = values.BT_ENABLED === "enabled" || values.BT_ACTIVE === "active";
-    const runtimeState = deriveRuntimeState({ installKeypad, installBt });
-    const hasHomeBackup = values.HOME_BACKUP === "yes";
-    const hasOptBackup = values.OPT_BACKUP === "yes";
-    const hasRecoveryRisk = (runtimeState === "keypad_only" || runtimeState === "both") && !hasHomeBackup && !hasOptBackup;
+    const hasHangulRuntime = values.HANGUL_SERVICE === "yes";
+    const hasBtConfig = values.BT_RUNTIME === "yes";
+    const runtimeState = deriveRuntimeState({ hasHangulRuntime, hasBtConfig });
 
     const checks: CheckResult[] = [
       {
         id: "reboot-ready",
         label: "재부팅 유지",
         pass: runtimeState === "clean"
-          || (!installKeypad || values.HOOK_ENV === "yes")
-          && (!installBt || values.BT_ACTIVE === "active"),
+          || (!hasHangulRuntime || values.HANGUL_ACTIVE === "active")
+          && (!hasBtConfig || values.BT_RUNTIME === "yes"),
         detail: runtimeState === "clean"
           ? "현재는 원본 상태"
           : "활성 런타임이 현재 상태와 일치합니다.",
@@ -198,54 +208,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       {
         id: "factory-guard",
         label: "팩토리리셋 정리 경로",
-        pass: runtimeState === "clean" || values.FACTORY_GUARD === "yes",
+        pass: runtimeState === "clean" || runtimeState === "hangul" || values.FACTORY_GUARD === "yes",
         detail: runtimeState === "clean"
           ? "현재는 원본 상태"
+          : runtimeState === "hangul"
+            ? "현재 구성에서는 별도 가드가 필요하지 않습니다."
           : values.FACTORY_GUARD === "yes"
             ? "정리 가드가 설치되어 있습니다."
             : "정리 가드가 없습니다.",
       },
       {
-        id: "recovery-backup",
-        label: "원본 복구 백업",
-        pass: runtimeState === "clean" || runtimeState === "bt_only" || hasHomeBackup || hasOptBackup,
-        detail: runtimeState === "clean" || runtimeState === "bt_only"
-          ? "키패드 원본 복구가 필요하지 않은 상태"
-          : hasHomeBackup || hasOptBackup
-            ? "원본 xochitl 백업이 존재합니다."
-            : "원본 xochitl 백업이 없습니다.",
-      },
-      {
-        id: "keypad-hook",
-        label: "기존 훅 설정",
-        pass: !installKeypad || values.HOOK_ENV === "yes",
-        detail: !installKeypad
+        id: "hangul-daemon",
+        label: "한글 입력 데몬",
+        pass: !hasHangulRuntime || values.HANGUL_ACTIVE === "active",
+        detail: !hasHangulRuntime
           ? "비활성"
-          : values.HOOK_ENV === "yes"
-            ? "LD_PRELOAD 적용됨"
-            : "LD_PRELOAD 미적용",
+          : `state=${values.HANGUL_ACTIVE ?? "unknown"}`,
       },
       {
-        id: "kbds",
-        label: "기존 키보드 파일",
-        pass: !installKeypad || Number(values.KBDS_COUNT ?? "0") > 0,
-        detail: !installKeypad
-          ? "비활성"
-          : `${values.KBDS_COUNT ?? "0"}개 locale`,
-      },
-      {
-        id: "bt-daemon",
-        label: "BT 데몬",
-        pass: !installBt || values.BT_ACTIVE === "active",
-        detail: !installBt
-          ? "비활성"
-          : `state=${values.BT_ACTIVE ?? "unknown"}`,
-      },
-      {
-        id: "bt-runtime",
-        label: "BT 런타임 아티팩트",
-        pass: !installBt || values.BT_RUNTIME === "yes",
-        detail: !installBt
+        id: "bt-config",
+        label: "블루투스 설치",
+        pass: !hasBtConfig || values.BT_RUNTIME === "yes",
+        detail: !hasBtConfig
           ? "비활성"
           : values.BT_RUNTIME === "yes"
             ? "btnxpuart autoload 준비됨"
@@ -257,15 +241,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       connected: true,
       supported: detectedDevice !== null,
       runtimeState,
-      hasHomeBackup,
-      hasOptBackup,
     });
 
     const recommendedAction = getRecommendedAction({
       connected: true,
       supported: detectedDevice !== null,
       runtimeState,
-      hasRecoveryRisk,
     });
 
     return NextResponse.json({
@@ -282,19 +263,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       checks,
       failureRoutines: buildFailureRoutines({
         connected: true,
-        runtimeState,
         checks,
-        hasRecoveryRisk,
       }),
       timeline: buildOperationTimeline({
         connected: true,
         runtimeState,
         checks,
       }),
-      backups: {
-        home: hasHomeBackup,
-        opt: hasOptBackup,
-      },
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

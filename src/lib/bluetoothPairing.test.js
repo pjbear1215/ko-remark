@@ -95,7 +95,7 @@ test("buildStaleDeviceRemovalScript fully clears the selected address for a fres
   assert.match(script, /untrust D6:A6:54:68:75:8B/);
   assert.match(script, /remove D6:A6:54:68:75:8B/);
   assert.match(script, /rm -rf \/var\/lib\/bluetooth\/\*\/D6:A6:54:68:75:8B/);
-  assert.match(script, /systemctl restart bluetooth/);
+  assert.doesNotMatch(script, /systemctl restart bluetooth/);
   assert.doesNotMatch(script, /STALE_ADDR/);
 });
 
@@ -107,9 +107,11 @@ test("buildBluetoothPairSessionScript runs bluetoothctl via fifo and pairs the s
 
   assert.match(script, /mkfifo/);
   assert.match(script, /exec 3<>/);
-  assert.match(script, /bluetoothctl --timeout 15 scan on/);
+  assert.match(script, /bluetoothctl --timeout 6 scan on/);
   assert.match(script, /DEVICE_NAME="Keys-To-Go 2"/);
+  assert.match(script, /bluetoothctl devices 2>\/dev\/null \| while read -r _ STALE_ADDR STALE_NAME/);
   assert.match(script, /send_cmd "pair \$ADDR"/);
+  assert.match(script, /echo "PAIRED_ADDR:\$ADDR"/);
   assert.match(script, /echo "PAIR_SUCCESS"/);
   assert.match(script, /echo "PAIR_FAILED"/);
   assert.match(script, /send_cmd "trust \$ADDR"/);
@@ -117,13 +119,14 @@ test("buildBluetoothPairSessionScript runs bluetoothctl via fifo and pairs the s
   assert.match(script, /INTERACTIVE_START/);
   assert.doesNotMatch(script, /sleep 45/);
   assert.match(script, /agent KeyboardDisplay/);
+  assert.match(script, /INFO=\$\(bluetoothctl info "\$ADDR" 2>&1\)/);
   assert.match(script, /OBSERVED_ADDRS/);
   assert.match(script, /Alias:/);
   assert.match(script, /Name:/);
   assert.match(script, /for CANDIDATE_ADDR in \$OBSERVED_ADDRS/);
 });
 
-test("buildBluetoothPairSessionScript prefers the latest observed address before falling back to cached info", () => {
+test("buildBluetoothPairSessionScript tries cached address before fallback scan", () => {
   const script = buildBluetoothPairSessionScript({
     address: "D6:A6:54:68:75:8C",
     name: "Keys-To-Go 2",
@@ -135,8 +138,8 @@ test("buildBluetoothPairSessionScript prefers the latest observed address before
   assert.notEqual(candidateLoopIndex, -1);
   assert.notEqual(cachedInfoIndex, -1);
   assert.ok(
-    candidateLoopIndex < cachedInfoIndex,
-    "latest observed address should be checked before cached bluetoothctl info",
+    cachedInfoIndex < candidateLoopIndex,
+    "cached bluetoothctl info should be checked before fallback scan",
   );
 });
 
@@ -155,13 +158,13 @@ Device D6:A6:54:68:75:8C (random)
   assert.equal(status.connected, true);
 });
 
-test("isBluetoothReadyStatus returns true for paired and trusted devices", () => {
+test("isBluetoothReadyStatus requires connected state as well", () => {
   assert.equal(
     isBluetoothReadyStatus({
       paired: true,
       bonded: true,
       trusted: true,
-      connected: false,
+      connected: true,
     }),
     true,
   );
@@ -179,7 +182,7 @@ test("isBluetoothReadyStatus returns false when trust is missing", () => {
   );
 });
 
-test("shouldTreatPairingAttemptAsSuccess requires a trusted paired device", () => {
+test("shouldTreatPairingAttemptAsSuccess requires a trusted connected paired device", () => {
   assert.equal(
     shouldTreatPairingAttemptAsSuccess({
       paired: true,
@@ -195,7 +198,7 @@ test("shouldTreatPairingAttemptAsSuccess requires a trusted paired device", () =
       paired: true,
       bonded: true,
       trusted: true,
-      connected: false,
+      connected: true,
     }),
     true,
   );

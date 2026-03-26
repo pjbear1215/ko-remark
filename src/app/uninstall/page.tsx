@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Button from "@/components/Button";
 import ProgressBar from "@/components/ProgressBar";
 import TerminalOutput from "@/components/TerminalOutput";
@@ -13,21 +13,45 @@ type UninstallStatus = "ready" | "uninstalling" | "complete" | "error";
 
 export default function UninstallPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { state } = useSetup();
+  const returnPath = state.ip && state.password ? "/entry" : "/";
   const [status, setStatus] = useState<UninstallStatus>("ready");
   const [logs, setLogs] = useState<string[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState("");
   const cleanupFiles = true;
+  const targetParam = searchParams.get("target");
+  const removeTarget = targetParam === "hangul" || targetParam === "bt" ? targetParam : "all";
+  const isPartialRemove = removeTarget !== "all";
   const [detected, setDetected] = useState<{
-    keypad: boolean;
+    hangul: boolean;
     bt: boolean;
     factoryGuard: boolean;
     swupdateHook: boolean;
   } | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const statusRef = useRef<UninstallStatus>("ready");
+
+  const pageTitle = isPartialRemove
+    ? removeTarget === "hangul"
+      ? "한글 입력 제거"
+      : "블루투스 제거"
+    : "설치제거";
+  const pageDescription = isPartialRemove
+    ? removeTarget === "hangul"
+      ? "한글 입력 관련 항목만 제거하고 블루투스 관련 구성은 유지합니다."
+      : "블루투스 관련 항목만 제거하고 한글 입력 구성은 유지합니다."
+    : "설치된 한글 입력/블루투스 설치를 모두 제거하고 원본 상태로 복원합니다.";
+  const readyGuideTitle = isPartialRemove ? "부분 제거 안내" : "복구 작업 안내";
+  const completeMessage = isPartialRemove
+    ? removeTarget === "hangul"
+      ? "한글 입력 제거가 완료되었습니다."
+      : "블루투스 제거가 완료되었습니다."
+    : "설치제거가 완료되었습니다.";
+  const errorContext = isPartialRemove ? "부분 제거" : "원상복구";
+  const startLabel = isPartialRemove ? "제거시작" : "제거시작";
 
   const startUninstall = async (): Promise<void> => {
     statusRef.current = "uninstalling";
@@ -43,6 +67,43 @@ export default function UninstallPage() {
       setStatus("error");
       setLogs(["ERROR: SSH 세션을 준비할 수 없습니다."]);
       setErrors(["SSH 세션을 준비할 수 없습니다."]);
+      return;
+    }
+
+    if (isPartialRemove) {
+      setCurrentStep(removeTarget === "hangul" ? "한글 입력 제거" : "블루투스 제거");
+      setProgress(20);
+      try {
+        const res = await fetch("/api/manage/remove", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ip: state.ip, password: state.password, target: removeTarget }),
+        });
+        const data = await res.json();
+        const nextLogs = Array.isArray(data.logs) ? data.logs : [];
+        setLogs(nextLogs);
+
+        if (!res.ok || data.success !== true) {
+          const message = data.error ?? "제거 중 오류가 발생했습니다.";
+          const errLine = `ERROR: ${message}`;
+          setErrors([errLine]);
+          setLogs((prev) => [...prev, errLine]);
+          statusRef.current = "error";
+          setStatus("error");
+          setProgress(100);
+          return;
+        }
+
+        setProgress(100);
+        statusRef.current = "complete";
+        setStatus("complete");
+      } catch {
+        const errLine = "ERROR: 제거 요청 중 서버 오류가 발생했습니다.";
+        setErrors([errLine]);
+        setLogs([errLine]);
+        statusRef.current = "error";
+        setStatus("error");
+      }
       return;
     }
 
@@ -123,17 +184,17 @@ export default function UninstallPage() {
               className="text-[36px] font-bold leading-tight"
               style={{ color: "var(--text-primary)" }}
             >
-              설치제거
+              {pageTitle}
             </h1>
-            <p
-              className="mt-3 text-[17px]"
-              style={{ color: "var(--text-muted)" }}
-            >
-              한글 입력 관련 설정을 모두 제거하고 원본 상태로 복원합니다.
-            </p>
+          <p
+            className="mt-3 text-[17px]"
+            style={{ color: "var(--text-muted)" }}
+          >
+            {pageDescription}
+          </p>
           </div>
-          <Button variant="ghost" onClick={() => router.push("/")} disabled={status === "uninstalling"}>
-            처음으로
+          <Button variant="ghost" onClick={() => router.push(returnPath)} disabled={status === "uninstalling"}>
+            작업 선택으로
           </Button>
         </div>
 
@@ -145,14 +206,23 @@ export default function UninstallPage() {
               style={{ backgroundColor: "var(--warning-light)", border: "1px solid var(--warning)" }}
             >
               <p className="font-medium text-[17px]" style={{ color: "var(--text-primary)" }}>
-                복구 작업 안내
+                {readyGuideTitle}
               </p>
               <ul className="mt-3 space-y-1.5 text-[15px]" style={{ color: "var(--text-muted)" }}>
-                <li>설치된 항목을 자동 감지하여 해당 항목만 복구합니다</li>
-                <li>xochitl 바이너리는 백업해둔 원본으로 복원됩니다</li>
-                <li>양쪽 파티션(현재 + 비활성) 모두 정리됩니다</li>
-                <li>펌웨어 업데이트 보호 장치도 함께 제거됩니다</li>
-                <li>한글 폰트도 함께 삭제됩니다</li>
+                {isPartialRemove ? (
+                  <>
+                    <li>선택한 기능에 해당하는 항목만 제거합니다</li>
+                    <li>다른 기능이 남아 있으면 공통 복구 경로는 유지됩니다</li>
+                    <li>ReKoIt 디렉토리 안의 해당 기능 관련 파일도 함께 정리됩니다</li>
+                  </>
+                ) : (
+                  <>
+                    <li>설치된 항목을 자동 감지하여 해당 항목만 복구합니다</li>
+                    <li>양쪽 파티션(현재 + 비활성) 모두 정리됩니다</li>
+                    <li>펌웨어 업데이트 보호 장치도 함께 제거됩니다</li>
+                    <li>한글 폰트도 함께 삭제됩니다</li>
+                  </>
+                )}
               </ul>
             </div>
           </div>
@@ -176,15 +246,15 @@ export default function UninstallPage() {
             className="p-6 rounded-xl animate-fade-in"
             style={{ backgroundColor: "var(--success-light)", color: "var(--success)" }}
           >
-            <p className="text-[20px] font-medium text-center">설치제거가 완료되었습니다.</p>
-            {detected && (
+            <p className="text-[20px] font-medium text-center">{completeMessage}</p>
+            {!isPartialRemove && detected && (
               <div className="mt-3 text-[14px] text-center" style={{ color: "var(--text-muted)" }}>
-                {detected.keypad && detected.bt
-                  ? "기존 설치 상태와 블루투스 구성이 모두 정리됨"
-                  : detected.keypad
-                  ? "기존 설치 상태가 정리됨"
+                {detected.hangul && detected.bt
+                  ? "한글 입력과 블루투스 설치가 모두 정리됨"
+                  : detected.hangul
+                  ? "한글 입력 구성이 정리됨"
                   : detected.bt
-                  ? "블루투스 키보드 복구됨"
+                  ? "블루투스 설치가 정리됨"
                   : "설치된 항목 없음"}
               </div>
             )}
@@ -192,7 +262,7 @@ export default function UninstallPage() {
         )}
 
         {status === "complete" && errors.length > 0 && (
-          <ErrorReport errors={errors} allLogs={logs} context="원상복구" />
+          <ErrorReport errors={errors} allLogs={logs} context={errorContext} />
         )}
 
         {/* 에러 */}
@@ -204,7 +274,7 @@ export default function UninstallPage() {
             >
               <p className="text-[17px] font-medium">오류가 발생했습니다.</p>
             </div>
-            <ErrorReport errors={errors} allLogs={logs} context="원상복구" />
+            <ErrorReport errors={errors} allLogs={logs} context={errorContext} />
             <Button variant="secondary" onClick={startUninstall}>
               재시도
             </Button>
@@ -215,7 +285,11 @@ export default function UninstallPage() {
         <div className="flex justify-end pt-4">
           {status === "ready" ? (
             <Button onClick={startUninstall} size="lg">
-              제거시작
+              {startLabel}
+            </Button>
+          ) : status === "complete" ? (
+            <Button onClick={() => router.push(returnPath)} size="lg">
+              작업 선택으로
             </Button>
           ) : null}
         </div>

@@ -25,6 +25,8 @@ export default function InstallPage() {
   const [currentStep, setCurrentStep] = useState("");
   const [lockPasswordDisabled, setLockPasswordDisabled] = useState(false);
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
+  const [installedState, setInstalledState] = useState({ hangul: false, bt: false });
+  const [availabilityLoaded, setAvailabilityLoaded] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const statusRef = useRef<InstallStatus>("ready");
 
@@ -38,7 +40,66 @@ export default function InstallPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!state.ip || !state.password) return;
+
+    let cancelled = false;
+    setAvailabilityLoaded(false);
+
+    const loadInstalledState = async () => {
+      try {
+        const res = await fetch("/api/manage/availability", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ip: state.ip, password: state.password }),
+        });
+        const data = await res.json();
+        if (cancelled || !res.ok) return;
+        setInstalledState({
+          hangul: data.hangulInstalled === true,
+          bt: data.btInstalled === true,
+        });
+      } catch {
+        // ignore availability lookup failures here
+      } finally {
+        if (!cancelled) {
+          setAvailabilityLoaded(true);
+        }
+      }
+    };
+
+    void loadInstalledState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.ip, state.password]);
+
   if (!allowed) return null;
+
+  const isBluetoothOnly = !state.installHangul;
+  const btAlreadyInstalled = state.installHangul && installedState.bt;
+  const effectiveBtSelected = state.installBtKeyboard || btAlreadyInstalled;
+  const shouldConfigureBluetoothAfterInstall = state.installBtKeyboard && !btAlreadyInstalled;
+  const btOptionDisabled = !availabilityLoaded || btAlreadyInstalled;
+  const operationLabel = "설치";
+  const scopeLabel = "설치 범위";
+  const changeScopeLabel = "설치 범위를 바꾸려면 이전 단계로 돌아가서 다시 선택하세요.";
+  const completeLabel = isBluetoothOnly ? "블루투스 설치가 완료되었습니다." : "설치가 완료되었습니다.";
+  const errorContext = "설치";
+  const logFilePrefix = isBluetoothOnly ? "rekoit-bluetooth-install-log" : "rekoit-hangul-install-log";
+  const startButtonLabel = "설치 시작";
+
+  const installScopeTitle = state.installHangul && effectiveBtSelected
+    ? "한글 입력 + 블루투스 설치"
+    : state.installHangul
+      ? "한글 입력만 설치"
+      : "블루투스만 설치";
+  const installScopeDescription = state.installHangul && effectiveBtSelected
+    ? "기본 한글 입력을 설치하고 블루투스 키보드 연결 경로도 함께 설치합니다."
+    : state.installHangul
+      ? "기본 한글 입력을 설치합니다. 필요하면 아래에서 블루투스 설치도 함께 적용할 수 있습니다."
+      : "블루투스 키보드 연결 경로만 설치합니다. 한글 폰트와 입력 런타임은 건드리지 않습니다.";
 
   const startInstall = async () => {
     eventSourceRef.current?.close();
@@ -56,8 +117,10 @@ export default function InstallPage() {
     setProgress(0);
 
     const params = new URLSearchParams({
+      hangul: state.installHangul ? "true" : "false",
       bt: state.installBtKeyboard ? "true" : "false",
       swapLeftCtrlCapsLock: state.swapLeftCtrlCapsLock ? "true" : "false",
+      btDeviceAddress: state.btDeviceAddress ?? "",
     });
 
     try {
@@ -141,7 +204,7 @@ export default function InstallPage() {
   };
 
   const handleNext = () => {
-    router.push(state.installBtKeyboard ? "/bluetooth" : "/complete");
+    router.push(shouldConfigureBluetoothAfterInstall ? "/bluetooth" : "/complete");
   };
 
   return (
@@ -154,14 +217,30 @@ export default function InstallPage() {
             className="text-[36px] font-bold leading-tight"
             style={{ color: "var(--text-primary)" }}
           >
-            설치
+            {operationLabel}
           </h1>
           <p
             className="mt-3 text-[17px]"
             style={{ color: "var(--text-muted)" }}
           >
-            기본 한글 입력을 설치합니다. 블루투스 키보드 지원은 선택 사항입니다.
+            {installScopeDescription}
           </p>
+          {state.installHangul && (
+            <div
+              className="mt-5 p-6 rounded-xl"
+              style={{
+                backgroundColor: "var(--success-light)",
+                border: "1px solid var(--success)",
+              }}
+            >
+              <p className="text-[19px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                한영 전환 방법
+              </p>
+              <p className="text-[17px] mt-2 leading-[1.7]" style={{ color: "var(--text-primary)" }}>
+                설치 후에는 <strong>Shift+Space</strong> 또는 <strong>오른쪽 Alt</strong>로 한영 전환할 수 있습니다.
+              </p>
+            </div>
+          )}
         </div>
 
         {status === "ready" && (
@@ -174,24 +253,38 @@ export default function InstallPage() {
               }}
             >
               <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>
-                설치 구성
+                {scopeLabel}
               </p>
               <p className="text-[13px] mt-1" style={{ color: "var(--text-muted)" }}>
-                기본 한글 입력은 항상 설치되고, 블루투스 키보드 지원은 별도로 선택할 수 있습니다.
+                {installScopeTitle}
+              </p>
+              <p className="text-[13px] mt-3" style={{ color: "var(--text-muted)" }}>
+                {changeScopeLabel}
               </p>
             </div>
-            <Checkbox
-              checked={state.installBtKeyboard}
-              onChange={(checked) => setState({ installBtKeyboard: checked })}
-              label="블루투스 키보드 지원 함께 설치"
-              description="켜면 블루투스 서비스와 페어링 경로를 같이 준비합니다. 끄면 일반 한글 입력만 설치합니다."
-            />
-            <Checkbox
-              checked={state.swapLeftCtrlCapsLock}
-              onChange={(checked) => setState({ swapLeftCtrlCapsLock: checked })}
-              label="왼쪽 CapsLock과 왼쪽 Ctrl 위치 바꾸기"
-              description="켜면 왼쪽 CapsLock은 Ctrl처럼, 왼쪽 Ctrl은 CapsLock처럼 동작합니다."
-            />
+            {state.installHangul && (
+              <Checkbox
+                checked={effectiveBtSelected}
+                onChange={(checked) => setState({ installBtKeyboard: checked })}
+                disabled={btOptionDisabled}
+                label="블루투스 설치도 함께 적용"
+                description={
+                  !availabilityLoaded
+                    ? "현재 설치 상태를 확인하고 있습니다."
+                    : btAlreadyInstalled
+                    ? "이미 블루투스가 설치되어 있어 함께 유지됩니다."
+                    : "켜면 한글 입력 설치와 함께 블루투스 키보드 연결 경로도 같이 설치합니다."
+                }
+              />
+            )}
+            {state.installHangul && (
+              <Checkbox
+                checked={state.swapLeftCtrlCapsLock}
+                onChange={(checked) => setState({ swapLeftCtrlCapsLock: checked })}
+                label="왼쪽 CapsLock과 왼쪽 Ctrl 위치 바꾸기"
+                description="켜면 왼쪽 CapsLock은 Ctrl처럼, 왼쪽 Ctrl은 CapsLock처럼 동작합니다."
+              />
+            )}
 
             {/* 설치 전 확인 사항 */}
             <div className="space-y-3 mt-6 stagger-2">
@@ -316,12 +409,12 @@ export default function InstallPage() {
             className="p-6 rounded-xl text-[17px] font-medium text-center animate-fade-in"
             style={{ backgroundColor: "var(--success-light)", color: "var(--success)" }}
           >
-            설치가 완료되었습니다.
+            {completeLabel}
           </div>
         )}
 
         {status === "complete" && errors.length > 0 && (
-          <ErrorReport errors={errors} allLogs={logs} context="설치" />
+          <ErrorReport errors={errors} allLogs={logs} context={errorContext} />
         )}
 
         {/* 에러 */}
@@ -336,7 +429,7 @@ export default function InstallPage() {
                 오류 상세를 확인하거나 로그 파일을 다운로드하세요.
               </p>
             </div>
-            <ErrorReport errors={errors} allLogs={logs} context="설치" />
+            <ErrorReport errors={errors} allLogs={logs} context={errorContext} />
             <Button variant="secondary" size="sm" onClick={startInstall}>
               재시도
             </Button>
@@ -350,7 +443,7 @@ export default function InstallPage() {
             size="sm"
             onClick={() => {
               const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-              const header = `=== 한글 설치 로그 ===\n시간: ${new Date().toISOString()}\n상태: ${status === "complete" ? "완료" : "오류"}\n오류 수: ${errors.length}\n\n`;
+              const header = `=== ${operationLabel} 로그 ===\n시간: ${new Date().toISOString()}\n상태: ${status === "complete" ? "완료" : "오류"}\n오류 수: ${errors.length}\n\n`;
               const errorSection = errors.length > 0
                 ? `--- 오류 ---\n${errors.join("\n")}\n\n`
                 : "";
@@ -360,7 +453,7 @@ export default function InstallPage() {
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
-              a.download = `hangul-install-log-${timestamp}.txt`;
+              a.download = `${logFilePrefix}-${timestamp}.txt`;
               a.click();
               URL.revokeObjectURL(url);
             }}
@@ -384,7 +477,7 @@ export default function InstallPage() {
               disabled={!developerModeEnabled || !lockPasswordDisabled}
               size="lg"
             >
-              설치 시작
+              {startButtonLabel}
             </Button>
           ) : (
             <Button onClick={handleNext} disabled={status !== "complete"} size="lg">

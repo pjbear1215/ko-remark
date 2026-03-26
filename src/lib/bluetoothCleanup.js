@@ -6,31 +6,29 @@ export function isKeyboardBluetoothInfo(output) {
   );
 }
 
-export function buildBluetoothKeyboardCleanupScript() {
+export function buildKeyboardBluetoothAddressScanScript() {
   return `
-KEYBOARD_ADDRS=$((
-  bluetoothctl devices Paired 2>/dev/null || true
-  bluetoothctl devices Trusted 2>/dev/null || true
-  bluetoothctl devices Connected 2>/dev/null || true
-) | awk '{print $2}' | sort -u)
-
-TARGET_ADDRS=""
-for ADDR in $KEYBOARD_ADDRS; do
-  INFO=$(bluetoothctl info "$ADDR" 2>/dev/null || true)
+find /var/lib/bluetooth -path '*/cache' -prune -o -type f -name info -print 2>/dev/null |
+while read -r INFO_FILE; do
+  INFO=$(cat "$INFO_FILE" 2>/dev/null || true)
   case "$INFO" in
-    *"Icon: input-keyboard"*|*"UUID: Human Interface Device"*)
-      TARGET_ADDRS="$TARGET_ADDRS $ADDR"
+    *"Icon=input-keyboard"*|*"UUID=Human Interface Device"*|*"00001124-0000-1000-8000-00805f9b34fb"*)
+      basename "$(dirname "$INFO_FILE")"
       ;;
   esac
-done
+done | awk 'NF' | sort -u
+`;
+}
 
-TARGET_ADDRS=$(printf '%s\n' $TARGET_ADDRS | awk 'NF' | sort -u)
+export function buildBluetoothKeyboardCleanupScript() {
+  const scanScript = buildKeyboardBluetoothAddressScanScript().trim();
+  return `
+TARGET_ADDRS=$(
+${scanScript}
+)
 REMOVED_COUNT=0
 
 for ADDR in $TARGET_ADDRS; do
-  bluetoothctl disconnect "$ADDR" 2>/dev/null || true
-  bluetoothctl untrust "$ADDR" 2>/dev/null || true
-  bluetoothctl remove "$ADDR" 2>/dev/null || true
   for ADAPTER in /var/lib/bluetooth/*; do
     [ -d "$ADAPTER" ] || continue
     rm -rf "$ADAPTER/$ADDR" "$ADAPTER/cache/$ADDR" 2>/dev/null || true
@@ -38,7 +36,6 @@ for ADDR in $TARGET_ADDRS; do
   REMOVED_COUNT=$((REMOVED_COUNT + 1))
 done
 
-systemctl restart bluetooth 2>/dev/null || true
 echo "BT_KEYBOARD_REMOVED_COUNT=$REMOVED_COUNT"
 `;
 }

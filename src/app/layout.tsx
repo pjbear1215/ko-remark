@@ -3,8 +3,8 @@ import "./globals.css";
 import Providers from "./providers";
 
 export const metadata: Metadata = {
-  title: "ko-remark",
-  description: "reMarkable 한글 입력 설치 도구",
+  title: "ReKoIt",
+  description: "reMarkable 한글 입력 + 블루투스 도구",
 };
 
 export default function RootLayout({
@@ -33,10 +33,10 @@ export default function RootLayout({
                 className="text-[15px] font-bold tracking-[0.18em] uppercase"
                 style={{ color: "var(--text-primary)" }}
               >
-                ko-remark
+                ReKoIt
               </p>
               <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>
-                리마커블 한글 입력 설치 도구
+                리마커블 한글 입력 + 블루투스 도구
               </p>
             </div>
             <span

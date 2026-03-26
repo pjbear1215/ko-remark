@@ -105,13 +105,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     fs.writeFileSync(tmpPath, buffer);
 
     // 리마커블에 업로드
-    await runScp(ip, password, tmpPath, "/home/root/bt-keyboard/fonts/NotoSansCJKkr-Regular.otf");
+    await runScp(ip, password, tmpPath, "/home/root/rekoit/fonts/NotoSansCJKkr-Regular.otf");
 
     // 시스템 폰트 경로에도 복사 + xochitl 재시작
     await runSsh(ip, password, `
       mount -o remount,rw / 2>/dev/null || true
       mkdir -p /usr/share/fonts/ttf/noto
-      cp /home/root/bt-keyboard/fonts/NotoSansCJKkr-Regular.otf /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf
+      cp /home/root/rekoit/fonts/NotoSansCJKkr-Regular.otf /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf
       fc-cache -f 2>/dev/null || true
       systemctl restart xochitl 2>/dev/null || true
     `);

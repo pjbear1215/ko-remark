@@ -126,20 +126,22 @@ export default function KeyboardSwapControl({
         </div>
         <div className="flex gap-3">
           <Button
-            variant="secondary"
+            variant={swapLeftCtrlCapsLock ? "secondary" : "ghost"}
             size="sm"
             onClick={() => applySwapSetting(true)}
             loading={savingAction === "on"}
             disabled={loading || savingAction !== null}
+            aria-pressed={swapLeftCtrlCapsLock}
           >
             켜기
           </Button>
           <Button
-            variant="ghost"
+            variant={swapLeftCtrlCapsLock ? "ghost" : "secondary"}
             size="sm"
             onClick={() => applySwapSetting(false)}
             loading={savingAction === "off"}
             disabled={loading || savingAction !== null}
+            aria-pressed={!swapLeftCtrlCapsLock}
           >
             끄기
           </Button>

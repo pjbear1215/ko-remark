@@ -3,7 +3,7 @@ Description=Hangul Keyboard Daemon
 
 [Service]
 Type=simple
-ExecStart=/home/root/bt-keyboard/hangul-daemon
+ExecStart=/home/root/rekoit/hangul-daemon
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM

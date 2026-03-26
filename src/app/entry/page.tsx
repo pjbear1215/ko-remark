@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
@@ -8,15 +8,16 @@ import Checkbox from "@/components/Checkbox";
 import { useSetup } from "@/lib/store";
 import { useGuard } from "@/lib/useGuard";
 
-type EntryMode = "install" | "manage";
+type EntryAction = "install-hangul" | "install-bt" | "manage";
 
 export default function EntryPage() {
   const allowed = useGuard();
   const router = useRouter();
   const { state, setState } = useSetup();
-  const [entryMode, setEntryMode] = useState<EntryMode>("install");
-  const [entryModeTouched, setEntryModeTouched] = useState(false);
+  const [selectedAction, setSelectedAction] = useState<EntryAction>("install-hangul");
+  const selectionTouchedRef = useRef(false);
   const [manageAvailable, setManageAvailable] = useState<boolean | null>(null);
+  const [installedState, setInstalledState] = useState<{ hangul: boolean; bt: boolean }>({ hangul: false, bt: false });
   const [manageChecking, setManageChecking] = useState(true);
   const [manageCheckError, setManageCheckError] = useState<string | null>(null);
   const [eulaChecked, setEulaChecked] = useState(state.eulaAgreed);
@@ -39,10 +40,12 @@ export default function EntryPage() {
         if (cancelled) return;
         const installed = res.ok && data.installed === true;
         setManageAvailable(installed);
-        if (!installed) {
-          setEntryMode("install");
-        } else if (!entryModeTouched) {
-          setEntryMode("manage");
+        setInstalledState({
+          hangul: res.ok && data.hangulInstalled === true,
+          bt: res.ok && data.btInstalled === true,
+        });
+        if (!selectionTouchedRef.current) {
+          setSelectedAction(installed ? "manage" : "install-hangul");
         }
         if (!res.ok && data.error) {
           setManageCheckError("설정 변경 가능 여부를 확인하지 못했습니다.");
@@ -50,8 +53,11 @@ export default function EntryPage() {
       } catch {
         if (cancelled) return;
         setManageAvailable(false);
+        setInstalledState({ hangul: false, bt: false });
         setManageCheckError("설정 변경 가능 여부를 확인하지 못했습니다.");
-        setEntryMode("install");
+        if (!selectionTouchedRef.current) {
+          setSelectedAction("install-hangul");
+        }
       } finally {
         if (!cancelled) {
           setManageChecking(false);
@@ -64,20 +70,54 @@ export default function EntryPage() {
     return () => {
       cancelled = true;
     };
-  }, [allowed, state.ip, state.password, entryModeTouched]);
+  }, [allowed, state.ip, state.password]);
 
   if (!allowed) return null;
 
   const canManage = manageAvailable === true;
-  const isInstallMode = entryMode === "install";
-  const installTitle = canManage ? "재설치" : "처음 설치";
-  const installDescription = canManage
-    ? "현재 설치 상태를 다시 적용하거나 복구가 필요할 때 다시 설치를 진행합니다."
-    : "Type Folio와 블루투스 키보드용 한글 입력을 새로 설치합니다.";
+  const isInstallAction = selectedAction === "install-hangul" || selectedAction === "install-bt";
+  const actionCards = [
+    {
+      id: "install-hangul" as const,
+      title: installedState.hangul ? "한글 입력 재설치" : "한글 입력 설치",
+      description: installedState.hangul
+        ? "한글 폰트와 입력 런타임을 다시 적용합니다. 설치 과정에서 블루투스 설치를 함께 선택할 수 있습니다."
+        : "Type Folio를 포함한 한글 입력을 설치합니다. 필요하면 블루투스 설치도 함께 적용할 수 있습니다.",
+      disabled: false,
+    },
+    {
+      id: "install-bt" as const,
+      title: installedState.bt ? "블루투스 재설치" : "블루투스 설치",
+      description: "한글 입력 없이 블루투스 키보드 연결 경로만 준비합니다.",
+      disabled: false,
+    },
+    {
+      id: "manage" as const,
+      title: "기기 관리",
+      description: "다시 설치하지 않고 블루투스 재페어링, 전원 제어, 키보드 설정만 바꿉니다.",
+      disabled: !canManage,
+    },
+  ];
+
+  const nextLabel = selectedAction === "install-hangul"
+    ? "한글 입력 설치로"
+    : selectedAction === "install-bt"
+      ? "블루투스 설치로"
+      : "기기 관리로";
 
   const handleNext = () => {
-    setState({ eulaAgreed: isInstallMode ? eulaChecked : state.eulaAgreed });
-    router.push(isInstallMode ? "/install" : "/manage");
+    if (selectedAction === "manage") {
+      setState({ eulaAgreed: state.eulaAgreed });
+      router.push("/manage");
+      return;
+    }
+
+    setState({
+      eulaAgreed: eulaChecked,
+      installHangul: selectedAction === "install-hangul",
+      installBtKeyboard: selectedAction === "install-bt",
+    });
+    router.push("/install");
   };
 
   return (
@@ -101,29 +141,18 @@ export default function EntryPage() {
         </div>
 
         <div className="space-y-5 stagger-1">
-          <div className="grid gap-3 md:grid-cols-2">
-            {([
-              {
-                id: "install" as const,
-                title: installTitle,
-                description: installDescription,
-              },
-              {
-                id: "manage" as const,
-                title: "기기 관리",
-                description: "다시 설치하지 않고 현재 기기의 옵션과 연결을 바꿉니다.",
-              },
-            ]).map((mode) => {
-              const selected = entryMode === mode.id;
-              const disabled = mode.id === "manage" && !canManage;
+          <div className="grid gap-3 md:grid-cols-3">
+            {actionCards.map((action) => {
+              const selected = selectedAction === action.id;
+              const disabled = action.disabled;
               return (
                 <button
-                  key={mode.id}
+                  key={action.id}
                   type="button"
                   onClick={() => {
                     if (!disabled) {
-                      setEntryModeTouched(true);
-                      setEntryMode(mode.id);
+                      selectionTouchedRef.current = true;
+                      setSelectedAction(action.id);
                     }
                   }}
                   disabled={disabled}
@@ -137,14 +166,14 @@ export default function EntryPage() {
                   }}
                 >
                   <p className="text-[18px] font-semibold" style={{ color: "var(--text-primary)" }}>
-                    {mode.title}
+                    {action.title}
                   </p>
                   <p className="text-[14px] mt-2" style={{ color: "var(--text-muted)" }}>
                     {disabled
                       ? manageChecking
                         ? "기기 관리 가능 여부를 확인하고 있습니다."
-                        : "hangul-daemon이 설치된 기기에서만 사용할 수 있습니다."
-                      : mode.description}
+                        : "이미 설치된 한글 입력 또는 블루투스 설치가 있을 때만 사용할 수 있습니다."
+                      : action.description}
                   </p>
                 </button>
               );
@@ -158,7 +187,7 @@ export default function EntryPage() {
           )}
         </div>
 
-        {isInstallMode && (
+        {isInstallAction && (
           <div className="space-y-4 stagger-2">
             <div
               className="p-6 rounded-xl text-[13px] leading-[22px] overflow-auto"
@@ -195,10 +224,10 @@ export default function EntryPage() {
           </Button>
           <Button
             onClick={handleNext}
-            disabled={manageChecking || (!isInstallMode && !canManage) || (isInstallMode && !eulaChecked)}
+            disabled={manageChecking || (!isInstallAction && !canManage) || (isInstallAction && !eulaChecked)}
             size="lg"
           >
-            {isInstallMode ? `${installTitle} 계속하기` : "기기 관리로"}
+            {nextLabel}
           </Button>
         </div>
       </div>

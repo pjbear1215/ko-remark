@@ -59,11 +59,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const output = await runSshCheck(
       ip,
       password,
-      "if [ -f /home/root/bt-keyboard/hangul-daemon ] || [ -f /etc/systemd/system/hangul-daemon.service ] || systemctl is-enabled hangul-daemon 2>/dev/null | grep -q enabled; then echo INSTALLED; else echo NOT_INSTALLED; fi",
+      `
+      if [ -f /home/root/rekoit/install-state.conf ]; then
+        . /home/root/rekoit/install-state.conf
+      fi
+      HANGUL_SERVICE_LINK=$(readlink /etc/systemd/system/hangul-daemon.service 2>/dev/null || true)
+      if [ -e /etc/systemd/system/hangul-daemon.service ] && [ "$HANGUL_SERVICE_LINK" != "/dev/null" ]; then
+        echo HANGUL_INSTALLED=1
+      else
+        echo HANGUL_INSTALLED=0
+      fi
+      if [ -f /etc/modules-load.d/btnxpuart.conf ]; then
+        echo BT_INSTALLED=1
+      else
+        echo BT_INSTALLED=0
+      fi
+      if [ -e /etc/systemd/system/hangul-daemon.service ] && [ "$HANGUL_SERVICE_LINK" != "/dev/null" ] || \
+         [ -f /etc/modules-load.d/btnxpuart.conf ]; then
+        echo INSTALLED=1
+      else
+        echo INSTALLED=0
+      fi
+      `,
     );
 
     return NextResponse.json({
-      installed: output === "INSTALLED",
+      installed: output.includes("INSTALLED=1"),
+      hangulInstalled: output.includes("HANGUL_INSTALLED=1"),
+      btInstalled: output.includes("BT_INSTALLED=1"),
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

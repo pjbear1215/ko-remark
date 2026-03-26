@@ -58,17 +58,30 @@ async function runSsh(
   throw new Error("SSH connection failed after retries");
 }
 
-async function detect(ip: string, password: string): Promise<{ keypad: boolean; bt: boolean }> {
+async function detect(ip: string, password: string): Promise<{ hangul: boolean; bt: boolean }> {
   const output = await runSsh(ip, password, `
-    strings /usr/bin/xochitl 2>/dev/null | grep -q "/home/root/.kbds/" && echo "KEYPAD=yes" || echo "KEYPAD=no"
-    if [ -f /home/root/bt-keyboard/hangul-daemon ] || systemctl is-enabled hangul-daemon 2>/dev/null | grep -q enabled; then
+    if [ -f /home/root/rekoit/install-state.conf ]; then
+      . /home/root/rekoit/install-state.conf
+      echo "STATE_HANGUL=\${INSTALL_HANGUL:-}"
+      echo "STATE_BT=\${INSTALL_BT:-0}"
+    else
+      echo "STATE_HANGUL="
+      echo "STATE_BT=0"
+    fi
+    HANGUL_SERVICE_LINK=$(readlink /etc/systemd/system/hangul-daemon.service 2>/dev/null || true)
+    if [ -e /etc/systemd/system/hangul-daemon.service ] && [ "$HANGUL_SERVICE_LINK" != "/dev/null" ]; then
+      echo "HANGUL=yes"
+    else
+      echo "HANGUL=no"
+    fi
+    if [ -f /etc/modules-load.d/btnxpuart.conf ]; then
       echo "BT=yes"
     else
       echo "BT=no"
     fi
   `);
   return {
-    keypad: output.includes("KEYPAD=yes"),
+    hangul: output.includes("HANGUL=yes"),
     bt: output.includes("BT=yes"),
   };
 }
@@ -76,38 +89,81 @@ async function detect(ip: string, password: string): Promise<{ keypad: boolean; 
 async function removeBt(ip: string, password: string, otherStillInstalled: boolean): Promise<string[]> {
   const logs: string[] = [];
 
-  // 모든 서비스 중지 및 비활성화 (하나의 세션에서)
+  // BT 런타임만 중지
   await runSsh(ip, password, `
-    systemctl stop hangul-daemon 2>/dev/null || true
-    systemctl disable hangul-daemon 2>/dev/null || true
-    killall hangul-daemon 2>/dev/null || true
+    systemctl stop bluetooth.service 2>/dev/null || true
+    systemctl stop rekoit-bt-agent.service 2>/dev/null || true
+    systemctl disable rekoit-bt-agent.service 2>/dev/null || true
+    systemctl stop rekoit-bt-wake-reconnect.service 2>/dev/null || true
+    systemctl disable rekoit-bt-wake-reconnect.service 2>/dev/null || true
+    systemctl stop rekoit-factory-guard.service 2>/dev/null || true
+    systemctl disable rekoit-factory-guard.service 2>/dev/null || true
     systemctl daemon-reload
   `);
-  logs.push("OK: hangul-daemon 중지 및 비활성화");
+  logs.push("OK: bluetooth.service 중지");
 
-  // remount + 모든 rootfs 작업을 하나의 세션에서 실행
+  // BT 전용 흔적만 원복
   const result = await runSsh(ip, password, `
     mount -o remount,rw / || { echo "FAIL:remount"; exit 0; }
-    rm -f /etc/systemd/system/hangul-daemon.service
-    rm -f /etc/systemd/system/multi-user.target.wants/hangul-daemon.service
     rm -f /etc/modules-load.d/btnxpuart.conf
+    rm -f /etc/systemd/system/rekoit-factory-guard.service
+    rm -f /etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service
+    rm -f /opt/rekoit/factory-guard.sh
+    rmdir /opt/rekoit 2>/dev/null || true
     rm -f /etc/systemd/system/bluetooth.service.d/wait-for-hci.conf
     rmdir /etc/systemd/system/bluetooth.service.d 2>/dev/null || true
     sed -i 's|^##*ConditionPathIsDirectory=/sys/class/bluetooth|ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
     sed -i '/^Privacy = off$/d' /etc/bluetooth/main.conf 2>/dev/null || true
-    rm -f /home/root/bt-keyboard/hangul-daemon
+    sed -i '/^FastConnectable = true$/d' /etc/bluetooth/main.conf 2>/dev/null || true
+    STATE_FILE="/home/root/rekoit/install-state.conf"
+    if [ -f "$STATE_FILE" ]; then
+      sed -i 's/^INSTALL_BT=.*/INSTALL_BT=0/' "$STATE_FILE" 2>/dev/null || true
+      sed -i 's/^BT_DEVICE_ADDRESS=.*/BT_DEVICE_ADDRESS=/' "$STATE_FILE" 2>/dev/null || true
+      if grep -q '^BLUETOOTH_POWER_ON=' "$STATE_FILE" 2>/dev/null; then
+        sed -i 's/^BLUETOOTH_POWER_ON=.*/BLUETOOTH_POWER_ON=0/' "$STATE_FILE" 2>/dev/null || true
+      else
+        printf '\nBLUETOOTH_POWER_ON=0\n' >> "$STATE_FILE"
+      fi
+      if grep -q '^INSTALL_HANGUL=' "$STATE_FILE" 2>/dev/null; then
+        sed -i 's/^INSTALL_HANGUL=.*/INSTALL_HANGUL=${otherStillInstalled ? "1" : "0"}/' "$STATE_FILE" 2>/dev/null || true
+      fi
+    fi
     echo "BT_REMOVE_OK"
   `);
   if (result.includes("FAIL:remount")) {
     logs.push("WARNING: rootfs remount 실패");
   } else {
-    logs.push("OK: hangul-daemon 서비스 파일 및 바이너리 제거");
+    logs.push("OK: 블루투스 런타임 설정 원복");
   }
 
   const btCleanupResult = await runSsh(ip, password, buildBluetoothKeyboardCleanupScript());
   const removedCountMatch = btCleanupResult.match(/BT_KEYBOARD_REMOVED_COUNT=(\d+)/);
   const removedCount = removedCountMatch ? Number.parseInt(removedCountMatch[1], 10) : 0;
   logs.push(`OK: 블루투스 키보드 페어링 정리 (${removedCount}개)`);
+
+  await runSsh(ip, password, `
+    rm -rf /home/root/rekoit/bt-pairing 2>/dev/null || true
+    rm -f /home/root/rekoit/install-bt.sh
+    rm -f /home/root/rekoit/restore-bt.sh
+    rm -f /home/root/rekoit/post-update-bt.sh
+    rm -f /home/root/rekoit/bt-wake-reconnect.sh
+    rm -f /home/root/rekoit/rekoit-bt-wake-reconnect.service
+    find /home/root/rekoit -type d -empty -delete 2>/dev/null || true
+  `);
+  logs.push("OK: ReKoIt 블루투스 관련 파일 정리");
+
+  if (!otherStillInstalled) {
+    await runSsh(ip, password, `
+      rm -f /etc/systemd/system/rekoit-restore.service
+      rm -f /etc/systemd/system/rekoit-bt-agent.service
+      rm -f /etc/systemd/system/rekoit-bt-wake-reconnect.service
+      rm -f /etc/systemd/system/multi-user.target.wants/rekoit-restore.service
+      rm -f /etc/systemd/system/multi-user.target.wants/rekoit-bt-agent.service
+      rm -f /etc/systemd/system/multi-user.target.wants/rekoit-bt-wake-reconnect.service
+      rm -f /etc/swupdate/conf.d/99-rekoit-postupdate
+    `);
+    logs.push("OK: BT-only ReKoIt 공통 복구 경로 제거");
+  }
 
   // 비활성 파티션 정리
   await runSsh(ip, password, `
@@ -121,13 +177,24 @@ async function removeBt(ip: string, password: string, otherStillInstalled: boole
       mkdir -p /mnt/inactive
       mount -o rw "$INACTIVE" /mnt/inactive 2>/dev/null || true
       if [ -d /mnt/inactive/etc ]; then
-        rm -f /mnt/inactive/etc/systemd/system/hangul-daemon.service
-        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/hangul-daemon.service
         rm -f /mnt/inactive/etc/modules-load.d/btnxpuart.conf
+        rm -f /mnt/inactive/etc/systemd/system/rekoit-factory-guard.service
+        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service
+        rm -rf /mnt/inactive/opt/rekoit 2>/dev/null || true
         rm -f /mnt/inactive/etc/systemd/system/bluetooth.service.d/wait-for-hci.conf
         rmdir /mnt/inactive/etc/systemd/system/bluetooth.service.d 2>/dev/null || true
+        ${otherStillInstalled ? "" : `
+        rm -f /mnt/inactive/etc/systemd/system/rekoit-restore.service
+        rm -f /mnt/inactive/etc/systemd/system/rekoit-bt-agent.service
+        rm -f /mnt/inactive/etc/systemd/system/rekoit-bt-wake-reconnect.service
+        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/rekoit-restore.service
+        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/rekoit-bt-agent.service
+        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/rekoit-bt-wake-reconnect.service
+        rm -f /mnt/inactive/etc/swupdate/conf.d/99-rekoit-postupdate
+        `}
         sed -i 's|^##*ConditionPathIsDirectory=/sys/class/bluetooth|ConditionPathIsDirectory=/sys/class/bluetooth|' /mnt/inactive/usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
         sed -i '/^Privacy = off$/d' /mnt/inactive/etc/bluetooth/main.conf 2>/dev/null || true
+        sed -i '/^FastConnectable = true$/d' /mnt/inactive/etc/bluetooth/main.conf 2>/dev/null || true
         sync
       fi
       umount /mnt/inactive 2>/dev/null || true
@@ -135,7 +202,6 @@ async function removeBt(ip: string, password: string, otherStillInstalled: boole
   `);
   logs.push("OK: 비활성 파티션 BT 흔적 제거");
 
-  // 다른 설치 상태도 없으면 공통 파일도 정리
   if (!otherStillInstalled) {
     await cleanupCommon(ip, password, logs);
   }
@@ -143,82 +209,90 @@ async function removeBt(ip: string, password: string, otherStillInstalled: boole
   await runSsh(ip, password, "systemctl daemon-reload");
   logs.push("OK: systemctl daemon-reload");
 
+  await runSsh(ip, password, `
+    systemctl stop bluetooth.service 2>/dev/null || true
+  `);
+  logs.push("OK: bluetooth.service 최종 종료");
+
   return logs;
 }
 
-async function removeOnscreen(ip: string, password: string, otherStillInstalled: boolean): Promise<string[]> {
+async function removeHangul(ip: string, password: string, otherStillInstalled: boolean): Promise<string[]> {
   const logs: string[] = [];
 
   // 1. 모든 관련 서비스 중지 및 비활성화 (하나의 세션)
   await runSsh(ip, password, `
     systemctl stop xochitl 2>/dev/null || true
-    systemctl stop hangul-restore 2>/dev/null || true
-    systemctl stop hangul-factory-guard 2>/dev/null || true
     systemctl stop hangul-daemon 2>/dev/null || true
-    systemctl disable hangul-restore 2>/dev/null || true
-    systemctl disable hangul-factory-guard 2>/dev/null || true
     systemctl disable hangul-daemon 2>/dev/null || true
+    ${otherStillInstalled ? "" : `
+    systemctl stop rekoit-restore 2>/dev/null || true
+    systemctl stop rekoit-factory-guard 2>/dev/null || true
+    systemctl disable rekoit-restore 2>/dev/null || true
+    systemctl disable rekoit-factory-guard 2>/dev/null || true
+    `}
     systemctl daemon-reload
   `);
-  logs.push("OK: 모든 hangul 서비스 중지 및 비활성화");
+  logs.push("OK: 한글 입력 런타임 서비스 중지 및 비활성화");
 
-  // 2. remount + xochitl 복원 + rootfs 파일 제거 (하나의 세션)
+  // 2. remount + rootfs 파일 제거 (하나의 세션)
   const mainResult = await runSsh(ip, password, `
     RESULTS=""
     mount -o remount,rw / || { echo "FAIL:remount"; exit 0; }
 
-    # xochitl 원본 복원
-    BACKUP=""
-    if [ -f "/home/root/bt-keyboard/backup/xochitl.original" ]; then
-      BACKUP="/home/root/bt-keyboard/backup/xochitl.original"
-    elif [ -f "/opt/bt-keyboard/xochitl.original" ]; then
-      BACKUP="/opt/bt-keyboard/xochitl.original"
+    LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
+    LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"
+    if grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; then
+      umount "$LIBEPAPER" 2>/dev/null || true
     fi
-    if [ -n "$BACKUP" ]; then
-      BACKUP_SIZE=$(stat -c %s "$BACKUP" 2>/dev/null)
-      CURRENT_SIZE=$(stat -c %s /usr/bin/xochitl 2>/dev/null)
-      if [ "$BACKUP_SIZE" = "$CURRENT_SIZE" ] && strings "$BACKUP" 2>/dev/null | grep -q ":/misc/keyboards/"; then
-        cp "$BACKUP" /usr/bin/xochitl && chmod 755 /usr/bin/xochitl && RESULTS="$RESULTS XOCHITL_OK" || RESULTS="$RESULTS XOCHITL_FAIL"
-      else
-        RESULTS="$RESULTS XOCHITL_MISMATCH"
-      fi
-    else
-      RESULTS="$RESULTS XOCHITL_NO_BACKUP"
-    fi
+    while mount | grep -q "$LIBEPAPER_TMPFS"; do
+      TARGET=$(mount | awk -v src="$LIBEPAPER_TMPFS" '$1==src {print $3; exit}')
+      [ -n "$TARGET" ] || break
+      umount "$TARGET" 2>/dev/null || true
+    done
+    rm -f "$LIBEPAPER_TMPFS"
 
     # libepaper 원본 복원
-    if [ -f /home/root/bt-keyboard/backup/libepaper.so.original ]; then
-      cp /home/root/bt-keyboard/backup/libepaper.so.original /usr/lib/plugins/platforms/libepaper.so 2>/dev/null || true
+    if [ -f /home/root/rekoit/backup/libepaper.so.original ]; then
+      cp /home/root/rekoit/backup/libepaper.so.original /usr/lib/plugins/platforms/libepaper.so 2>/dev/null || true
     fi
-
-    # LD_PRELOAD 오버라이드 제거
-    rm -f /etc/systemd/system/xochitl.service.d/override.conf
-    rm -f /etc/systemd/system/xochitl.service.d/zz-hangul-hook.conf
-    rmdir /etc/systemd/system/xochitl.service.d 2>/dev/null || true
-    rm -f /usr/lib/systemd/system/xochitl.service.d/zz-hangul-hook.conf
 
     # 서비스 파일 제거
     rm -f /etc/systemd/system/hangul-daemon.service
-    rm -f /etc/systemd/system/hangul-restore.service
-    rm -f /etc/systemd/system/hangul-factory-guard.service
     rm -f /etc/systemd/system/multi-user.target.wants/hangul-daemon.service
-    rm -f /etc/systemd/system/multi-user.target.wants/hangul-restore.service
-    rm -f /etc/systemd/system/multi-user.target.wants/hangul-factory-guard.service
+    ${otherStillInstalled ? "" : `
+    rm -f /etc/systemd/system/rekoit-restore.service
+    rm -f /etc/systemd/system/rekoit-factory-guard.service
+    rm -f /etc/systemd/system/multi-user.target.wants/rekoit-restore.service
+    rm -f /etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service
+    `}
 
     # 폰트 제거
     rm -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf
     fc-cache -f 2>/dev/null || true
 
     # factory-guard, swupdate hook 제거
-    rm -f /etc/swupdate/conf.d/99-hangul-postupdate
-    rm -f /opt/bt-keyboard/factory-guard.sh
-    rm -f /opt/bt-keyboard/xochitl.original
-    rm -f /opt/bt-keyboard/hangul_hook.so
-    rmdir /opt/bt-keyboard 2>/dev/null || true
+    ${otherStillInstalled ? "" : `
+    rm -f /etc/swupdate/conf.d/99-rekoit-postupdate
+    rm -f /opt/rekoit/factory-guard.sh
+    rmdir /opt/rekoit 2>/dev/null || true
+    `}
 
+    ${otherStillInstalled ? "" : `
     # bluetooth 원복
     sed -i 's|^##*ConditionPathIsDirectory=/sys/class/bluetooth|ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
     sed -i '/^Privacy = off$/d' /etc/bluetooth/main.conf 2>/dev/null || true
+    sed -i '/^FastConnectable = true$/d' /etc/bluetooth/main.conf 2>/dev/null || true
+    `}
+
+    STATE_FILE="/home/root/rekoit/install-state.conf"
+    if [ -f "$STATE_FILE" ]; then
+      if grep -q '^INSTALL_HANGUL=' "$STATE_FILE" 2>/dev/null; then
+        sed -i 's/^INSTALL_HANGUL=.*/INSTALL_HANGUL=0/' "$STATE_FILE" 2>/dev/null || true
+      else
+        printf '\nINSTALL_HANGUL=0\n' >> "$STATE_FILE"
+      fi
+    fi
 
     echo "$RESULTS ROOTFS_DONE"
   `);
@@ -227,40 +301,23 @@ async function removeOnscreen(ip: string, password: string, otherStillInstalled:
     logs.push("ERROR: rootfs remount 실패 — 제거 불가");
     return logs;
   }
-  if (mainResult.includes("XOCHITL_OK")) {
-    logs.push("OK: xochitl 원본 바이너리 복원");
-  } else if (mainResult.includes("XOCHITL_FAIL")) {
-    logs.push("WARNING: xochitl cp 실패");
-  } else if (mainResult.includes("XOCHITL_NO_BACKUP")) {
-    logs.push("WARNING: xochitl 백업 파일 없음");
-  } else {
-    logs.push("WARNING: xochitl 복원 실패 (크기 불일치)");
-  }
-  logs.push("OK: LD_PRELOAD, 서비스 파일, 폰트, factory-guard 제거");
+  logs.push(`OK: 한글 입력 런타임, 폰트, libepaper 정리${otherStillInstalled ? "" : ", ReKoIt guard 제거"}`);
 
-  // 3. /home 파일 제거 (별도 — /home은 별도 파티션)
   await runSsh(ip, password, `
-    find /home/root/.kbds -type f -delete 2>/dev/null || true
-    find /home/root/.kbds -type d -empty -delete 2>/dev/null || true
-    rmdir /home/root/.kbds 2>/dev/null || true
+    rm -f /home/root/rekoit/install-hangul.sh
+    rm -f /home/root/rekoit/restore-hangul.sh
+    rm -f /home/root/rekoit/post-update-hangul.sh
+    rm -f /home/root/rekoit/hangul-daemon
+    rm -f /home/root/rekoit/hangul-daemon.service
+    rm -f /home/root/rekoit/fonts/NotoSansCJKkr-Regular.otf
+    rm -f /home/root/rekoit/backup/libepaper.so.original
+    rm -f /home/root/rekoit/backup/libepaper.so.latest
+    rm -f /home/root/rekoit/backup/font_existed
+    find /home/root/rekoit -type d -empty -delete 2>/dev/null || true
   `);
-  logs.push("OK: .kbds 키보드 레이아웃 제거");
+  logs.push("OK: ReKoIt 한글 입력 관련 파일 정리");
 
-  // 4. 키보드 설정 복원 ([General] 섹션 안에 삽입)
-  await runSsh(ip, password, `
-    CONF="/home/root/.config/remarkable/xochitl.conf"
-    if [ -f "$CONF" ]; then
-      sed -i '/^Keyboard=/d' "$CONF"
-      if grep -q '^\\[General\\]' "$CONF"; then
-        sed -i '/^\\[General\\]/a\\Keyboard=en_US' "$CONF"
-      else
-        echo "Keyboard=en_US" >> "$CONF"
-      fi
-    fi
-  `);
-  logs.push("OK: 키보드 설정 복원 (en_US)");
-
-  // 5. 비활성 파티션 정리
+  // 3. 비활성 파티션 정리
   await runSsh(ip, password, `
     CURRENT=$(mount | grep ' / ' | head -n 1 | awk '{print $1}')
     case "$CURRENT" in
@@ -272,55 +329,69 @@ async function removeOnscreen(ip: string, password: string, otherStillInstalled:
       mkdir -p /mnt/inactive
       mount -o rw "$INACTIVE" /mnt/inactive 2>/dev/null || true
       if [ -d /mnt/inactive/usr ]; then
-        if [ -f /mnt/inactive/opt/bt-keyboard/xochitl.original ]; then
-          cp /mnt/inactive/opt/bt-keyboard/xochitl.original /mnt/inactive/usr/bin/xochitl
-          chmod 755 /mnt/inactive/usr/bin/xochitl
-        fi
-        rm -f /mnt/inactive/opt/bt-keyboard/factory-guard.sh /mnt/inactive/opt/bt-keyboard/xochitl.original /mnt/inactive/opt/bt-keyboard/hangul_hook.so
-        rmdir /mnt/inactive/opt/bt-keyboard 2>/dev/null || true
+        ${otherStillInstalled ? "" : `
+        rm -f /mnt/inactive/opt/rekoit/factory-guard.sh
+        rmdir /mnt/inactive/opt/rekoit 2>/dev/null || true
+        `}
         rm -f /mnt/inactive/usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf
-        rm -f /mnt/inactive/etc/swupdate/conf.d/99-hangul-postupdate
-        rm -f /mnt/inactive/etc/systemd/system/xochitl.service.d/override.conf
-        rm -f /mnt/inactive/etc/systemd/system/xochitl.service.d/zz-hangul-hook.conf
-        rmdir /mnt/inactive/etc/systemd/system/xochitl.service.d 2>/dev/null || true
-        rm -f /mnt/inactive/usr/lib/systemd/system/xochitl.service.d/zz-hangul-hook.conf
+        ${otherStillInstalled ? "" : `rm -f /mnt/inactive/etc/swupdate/conf.d/99-rekoit-postupdate`}
         rm -f /mnt/inactive/etc/systemd/system/hangul-daemon.service
-        rm -f /mnt/inactive/etc/systemd/system/hangul-restore.service
-        rm -f /mnt/inactive/etc/systemd/system/hangul-factory-guard.service
         rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/hangul-daemon.service
-        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/hangul-restore.service
-        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/hangul-factory-guard.service
+        ${otherStillInstalled ? "" : `
+        rm -f /mnt/inactive/etc/systemd/system/rekoit-restore.service
+        rm -f /mnt/inactive/etc/systemd/system/rekoit-factory-guard.service
+        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/rekoit-restore.service
+        rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service
+        `}
+        ${otherStillInstalled ? "" : `
         sed -i 's|^##*ConditionPathIsDirectory=/sys/class/bluetooth|ConditionPathIsDirectory=/sys/class/bluetooth|' /mnt/inactive/usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
         sed -i '/^Privacy = off$/d' /mnt/inactive/etc/bluetooth/main.conf 2>/dev/null || true
+        sed -i '/^FastConnectable = true$/d' /mnt/inactive/etc/bluetooth/main.conf 2>/dev/null || true
+        `}
         sync
       fi
       umount /mnt/inactive 2>/dev/null || true
     fi
   `);
-  logs.push("OK: 비활성 파티션 기존 설치 상태 정리");
+  logs.push("OK: 비활성 파티션 한글 입력 런타임 흔적 정리");
 
-  // 6. BT도 없으면 공통 파일도 정리
+  // 4. BT도 없으면 공통 파일도 정리
   if (!otherStillInstalled) {
     await cleanupCommon(ip, password, logs);
   }
 
-  // 7. daemon-reload + xochitl 재시작
+  // 5. daemon-reload + xochitl 재시작
   await runSsh(ip, password, "systemctl daemon-reload && systemctl restart xochitl 2>/dev/null || true");
   logs.push("OK: xochitl 재시작");
 
-  // 8. 최종 검증
+  if (!otherStillInstalled) {
+    await runSsh(ip, password, `
+      systemctl stop bluetooth.service 2>/dev/null || true
+    `);
+    logs.push("OK: bluetooth.service 종료");
+  } else {
+    logs.push("OK: 블루투스 런타임 유지");
+  }
+
+  // 6. 최종 검증
   const verify = await runSsh(ip, password, `
     FAIL=""
-    strings /usr/bin/xochitl 2>/dev/null | grep -q "/home/root/.kbds/" && FAIL="$FAIL xochitl_still_patched"
-    [ -d /etc/systemd/system/xochitl.service.d ] && FAIL="$FAIL override_exists"
-    [ -f /usr/lib/systemd/system/xochitl.service.d/zz-hangul-hook.conf ] && FAIL="$FAIL usr_hook_dropin_exists"
-    [ -d /home/root/.kbds ] && FAIL="$FAIL kbds_exists"
     [ -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf ] && FAIL="$FAIL font_exists"
-    [ -d /opt/bt-keyboard ] && FAIL="$FAIL opt_exists"
-    [ -d /home/root/bt-keyboard ] && FAIL="$FAIL bt_keyboard_exists"
-    [ -f /etc/swupdate/conf.d/99-hangul-postupdate ] && FAIL="$FAIL swupdate_hook_exists"
-    KB_COUNT=$(grep -c '^Keyboard=' /home/root/.config/remarkable/xochitl.conf 2>/dev/null || echo 0)
-    [ "$KB_COUNT" -gt 1 ] && FAIL="$FAIL keyboard_duplicate"
+    ${otherStillInstalled ? "" : `[ -d /opt/rekoit ] && FAIL="$FAIL opt_exists"`}
+    ${otherStillInstalled ? `
+    [ -f /home/root/rekoit/install-hangul.sh ] && FAIL="$FAIL install_hangul_exists"
+    [ -f /home/root/rekoit/restore-hangul.sh ] && FAIL="$FAIL restore_hangul_exists"
+    [ -f /home/root/rekoit/post-update-hangul.sh ] && FAIL="$FAIL post_update_hangul_exists"
+    [ -f /home/root/rekoit/hangul-daemon ] && FAIL="$FAIL hangul_daemon_exists"
+    [ -f /home/root/rekoit/hangul-daemon.service ] && FAIL="$FAIL hangul_service_exists"
+    [ -f /home/root/rekoit/fonts/NotoSansCJKkr-Regular.otf ] && FAIL="$FAIL hangul_font_backup_exists"
+    [ -f /home/root/rekoit/backup/libepaper.so.original ] && FAIL="$FAIL libepaper_backup_exists"
+    [ -f /home/root/rekoit/backup/libepaper.so.latest ] && FAIL="$FAIL libepaper_latest_exists"
+    [ -f /home/root/rekoit/backup/font_existed ] && FAIL="$FAIL font_marker_exists"
+    ` : `[ -d /home/root/rekoit ] && FAIL="$FAIL rekoit_home_exists"`}
+    [ -f /dev/shm/hangul-libepaper.so ] && FAIL="$FAIL libepaper_tmpfs_exists"
+    mount | grep -q ' /usr/lib/plugins/platforms/libepaper.so ' && FAIL="$FAIL libepaper_bind_mount_exists"
+    ${otherStillInstalled ? "" : `[ -f /etc/swupdate/conf.d/99-rekoit-postupdate ] && FAIL="$FAIL swupdate_hook_exists"`}
     if [ -z "$FAIL" ]; then echo "VERIFY_OK"; else echo "VERIFY_FAIL:$FAIL"; fi
   `);
   const verifyTrimmed = verify.trim();
@@ -336,19 +407,24 @@ async function removeOnscreen(ip: string, password: string, otherStillInstalled:
 async function cleanupCommon(ip: string, password: string, logs: string[]): Promise<void> {
   // .bashrc 정리
   await runSsh(ip, password, `
-    if [ -f /home/root/.bashrc ] && grep -q 'bt-keyboard' /home/root/.bashrc 2>/dev/null; then
-      rm -f /home/root/.bashrc
+    rm -f /home/root/.rekoit-restore-login.sh 2>/dev/null || true
+    if [ -f /home/root/.profile ]; then
+      sed -i '\\|/home/root/.rekoit-restore-login.sh|d' /home/root/.profile 2>/dev/null || true
+    fi
+    if [ -f /home/root/.bashrc ]; then
+      sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
+      sed -i '/# ReKoIt auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
     fi
   `);
-  logs.push("OK: .bashrc 자동복구 스크립트 제거");
+  logs.push("OK: 로그인 ReKoIt 자동복구 스크립트 제거");
 
-  // bt-keyboard 디렉토리 전체 제거
+  // ReKoIt 디렉토리 전체 제거
   await runSsh(ip, password, `
-    find /home/root/bt-keyboard -type f -delete 2>/dev/null || true
-    find /home/root/bt-keyboard -type d -empty -delete 2>/dev/null || true
-    rm -rf /home/root/bt-keyboard 2>/dev/null || true
+    find /home/root/rekoit -type f -delete 2>/dev/null || true
+    find /home/root/rekoit -type d -empty -delete 2>/dev/null || true
+    rm -rf /home/root/rekoit 2>/dev/null || true
   `);
-  logs.push("OK: bt-keyboard 디렉토리 전체 제거");
+  logs.push("OK: ReKoIt 디렉토리 전체 제거");
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -364,26 +440,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ success: false, error: "Invalid IP" }, { status: 400 });
     }
 
-    if (target !== "bt" && target !== "onscreen") {
-      return NextResponse.json({ success: false, error: "target은 bt 또는 onscreen" }, { status: 400 });
+    const normalizedTarget = target === "onscreen" ? "hangul" : target;
+
+    if (normalizedTarget !== "bt" && normalizedTarget !== "hangul") {
+      return NextResponse.json({ success: false, error: "target은 bt 또는 hangul" }, { status: 400 });
     }
 
     // 현재 설치 상태 감지
     const detected = await detect(ip, password);
 
-    if (target === "bt" && !detected.bt) {
-      return NextResponse.json({ success: false, error: "블루투스 한글 키보드가 설치되어 있지 않습니다" });
+    if (normalizedTarget === "bt" && !detected.bt) {
+      return NextResponse.json({ success: false, error: "제거할 블루투스 설치가 감지되지 않습니다" });
     }
 
-    if (target === "onscreen" && !detected.keypad) {
-    return NextResponse.json({ success: false, error: "해당 설치 항목이 감지되지 않습니다" });
+    if (normalizedTarget === "hangul" && !detected.hangul) {
+      return NextResponse.json({ success: false, error: "제거할 한글 입력 구성 요소가 감지되지 않습니다" });
     }
 
-    const otherStillInstalled = target === "bt" ? detected.keypad : detected.bt;
-
-    const logs = target === "bt"
-      ? await removeBt(ip, password, otherStillInstalled)
-      : await removeOnscreen(ip, password, otherStillInstalled);
+    const logs = normalizedTarget === "bt"
+      ? await removeBt(ip, password, detected.hangul)
+      : await removeHangul(ip, password, detected.bt);
 
     return NextResponse.json({ success: true, logs });
   } catch (err) {

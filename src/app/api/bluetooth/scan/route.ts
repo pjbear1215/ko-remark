@@ -2,7 +2,10 @@ import { NextRequest } from "next/server";
 import { spawn } from "child_process";
 import { getSshSessionFromRequest } from "@/lib/server/sshSession";
 import { buildBluetoothCleanupScript } from "@/lib/bluetoothPairing.js";
-import { extractDiscoveredDevice } from "@/lib/bluetoothScan.js";
+import {
+  extractDiscoveredDevice,
+  isDisplayableBluetoothDeviceName,
+} from "@/lib/bluetoothScan.js";
 
 export async function GET(request: NextRequest): Promise<Response> {
   const session = getSshSessionFromRequest(request);
@@ -74,9 +77,9 @@ case "$SCAN_OUT" in
     sleep 3
     systemctl reset-failed bluetooth.service 2>/dev/null || true
     systemctl start bluetooth.service 2>/dev/null || true
-    bluetoothctl power on 2>/dev/null
+    bluetoothctl power on 2>/dev/null || true
     sleep 1
-    bluetoothctl pairable on 2>/dev/null
+    bluetoothctl pairable on 2>/dev/null || true
     sleep 0.5
     SCAN_OUT=$(bluetoothctl --timeout 15 scan on 2>&1)
     echo "$SCAN_OUT"
@@ -110,10 +113,10 @@ ${buildBluetoothCleanupScript()}
             "UserKnownHostsFile=/dev/null",
             "-o",
             "ConnectTimeout=30",
-          `root@${session.ip}`,
-          scanCmd,
-        ],
-        { env },
+            `root@${session.ip}`,
+            scanCmd,
+          ],
+          { env },
         );
 
         const devices = new Map<string, string>();
@@ -123,7 +126,6 @@ ${buildBluetoothCleanupScript()}
           const lines = output.split("\n");
           for (const line of lines) {
             const trimmed = line.trim();
-            // 모든 출력을 로그로 전달 (디버깅용)
             if (trimmed && !trimmed.startsWith("BT_") && !trimmed.startsWith("DEVICE|")) {
               send("log", { line: trimmed });
             }
@@ -136,10 +138,9 @@ ${buildBluetoothCleanupScript()}
               const parts = line.split("|");
               if (parts.length >= 3) {
                 const addr = parts[1];
-                // Format: DEVICE|addr|name|icon (icon is optional)
                 const name = parts[2]?.trim() ?? "";
                 const icon = parts[3]?.trim() ?? "";
-                if (addr && name && !devices.has(addr)) {
+                if (addr && isDisplayableBluetoothDeviceName(name) && !devices.has(addr)) {
                   devices.set(addr, name);
                   send("device", { address: addr, name, icon });
                 }
@@ -156,9 +157,7 @@ ${buildBluetoothCleanupScript()}
 
         proc.stderr.on("data", (data: Buffer) => {
           const output = data.toString();
-          // Skip SSH warnings
           if (output.includes("Warning: Permanently added")) return;
-          // 모든 stderr 출력을 로그로 전달 (스캔 이벤트 디버깅)
           const lines = output.split("\n");
           for (const l of lines) {
             const t = l.trim();
@@ -166,7 +165,6 @@ ${buildBluetoothCleanupScript()}
               send("log", { line: t });
             }
           }
-          // Parse NEW device discoveries from stderr (bluetoothctl outputs to stderr)
           for (const rawLine of output.split("\n")) {
             const discovered = extractDiscoveredDevice(rawLine);
             if (discovered && !devices.has(discovered.address)) {

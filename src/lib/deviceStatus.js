@@ -1,21 +1,21 @@
 export function deriveRuntimeState({
-  installKeypad,
-  installBt,
+  hasHangulRuntime,
+  hasBtConfig,
 }) {
-  if (installKeypad && installBt) return "both";
-  if (installKeypad) return "keypad_only";
-  if (installBt) return "bt_only";
+  if (hasHangulRuntime && hasBtConfig) return "hangul_bt";
+  if (hasHangulRuntime) return "hangul";
+  if (hasBtConfig) return "bt";
   return "clean";
 }
 
 export function getRuntimeStateLabel(runtimeState) {
   switch (runtimeState) {
-    case "both":
-      return "기존 설치 상태 + 블루투스";
-    case "keypad_only":
-      return "기존 설치 상태 감지";
-    case "bt_only":
-      return "Type Folio / 블루투스 입력 설치됨";
+    case "hangul":
+      return "한글 입력 설치됨";
+    case "bt":
+      return "블루투스 설치됨";
+    case "hangul_bt":
+      return "한글 입력 + 블루투스 설치됨";
     default:
       return "원본 상태";
   }
@@ -25,8 +25,6 @@ export function getSafetyStatus({
   connected,
   supported = true,
   runtimeState,
-  hasHomeBackup,
-  hasOptBackup,
 }) {
   if (!connected) {
     return {
@@ -44,28 +42,16 @@ export function getSafetyStatus({
     };
   }
 
-  if ((runtimeState === "keypad_only" || runtimeState === "both") && !hasHomeBackup && !hasOptBackup) {
-    return {
-      tone: "danger",
-      label: "복구 차단 상태",
-      description: "기존 설치 상태가 남아 있지만 원본 백업이 없어 추가 설치를 차단합니다.",
-    };
-  }
-
-  if (runtimeState === "clean" || runtimeState === "bt_only") {
-    return {
-      tone: "safe",
-      label: "보증 영향 낮음",
-      description: runtimeState === "clean"
-        ? "현재는 원본 상태입니다."
-        : "현재는 Type Folio / 블루투스 입력 경로만 설치되어 있습니다.",
-    };
-  }
-
   return {
-    tone: "caution",
-    label: "정리 필요",
-    description: "기존 설치 상태가 남아 있어 원상복구를 권장합니다.",
+    tone: "safe",
+    label: "보증 영향 낮음",
+      description: runtimeState === "clean"
+      ? "현재는 원본 상태입니다."
+      : runtimeState === "hangul_bt"
+        ? "현재는 한글 입력과 블루투스 설치가 함께 설치되어 있습니다."
+        : runtimeState === "bt"
+          ? "현재는 블루투스만 설치되어 있습니다."
+          : "현재는 한글 입력 런타임만 설치되어 있습니다.",
   };
 }
 
@@ -73,7 +59,6 @@ export function getRecommendedAction({
   connected,
   supported = true,
   runtimeState,
-  hasRecoveryRisk,
 }) {
   if (!connected) {
     return {
@@ -93,55 +78,37 @@ export function getRecommendedAction({
     };
   }
 
-  if (hasRecoveryRisk) {
-    return {
-      id: "restore-first",
-      title: "원상복구 우선",
-      description: "추가 설치 전에 원본 백업 상태를 먼저 복구해야 합니다.",
-      href: "/uninstall",
-    };
-  }
-
   if (runtimeState === "clean") {
     return {
       id: "safe-install",
       title: "안전 설치 시작",
-      description: "Type Folio / 블루투스 키보드용 한글 입력 설치를 시작합니다.",
+      description: "한글 입력 설치를 시작합니다. 필요하면 블루투스 설치도 함께 준비할 수 있습니다.",
       href: "/install",
     };
   }
 
-  if (runtimeState === "bt_only") {
+  if (runtimeState === "bt" || runtimeState === "hangul_bt") {
     return {
       id: "check-keyboard",
       title: "키보드 연결 확인",
-      description: "현재 설치는 끝났습니다. Type Folio 또는 블루투스 키보드에서 입력을 확인하세요.",
+      description: runtimeState === "bt"
+        ? "블루투스 키보드 연결과 입력을 확인하세요."
+        : "현재 설치는 끝났습니다. Type Folio 또는 블루투스 키보드에서 입력을 확인하세요.",
       href: "/bluetooth",
     };
   }
 
-  if (runtimeState === "keypad_only" || runtimeState === "both") {
-    return {
-      id: "remove-legacy",
-      title: "설치 상태 정리",
-      description: "원상복구 후 다시 설치하세요.",
-      href: "/uninstall",
-    };
-  }
-
   return {
-    id: "check-keyboard",
-    title: "키보드 연결 확인",
-    description: "현재 설치는 끝났습니다. Type Folio 또는 블루투스 키보드에서 입력을 확인하세요.",
-    href: "/bluetooth",
+      id: "open-manage",
+      title: "설치 상태 확인",
+      description: "현재 한글 입력 런타임이 설치되어 있습니다. 설정 변경이나 진단을 진행할 수 있습니다.",
+    href: "/manage",
   };
 }
 
 export function buildFailureRoutines({
   connected,
-  runtimeState,
   checks,
-  hasRecoveryRisk,
 }) {
   if (!connected) {
     return [
@@ -160,19 +127,7 @@ export function buildFailureRoutines({
   const routines = [];
   const failingChecks = new Set(checks.filter((check) => !check.pass).map((check) => check.id));
 
-  if (hasRecoveryRisk) {
-    routines.push({
-      id: "recovery-risk",
-      title: "원상복구 우선",
-      steps: [
-        "현재 상태에서는 추가 설치를 진행하지 않습니다.",
-        "원상복구를 실행해 원본 경로(:/misc/keyboards/) 복귀 여부를 먼저 확인합니다.",
-        "원본 백업이 다시 확보되기 전에는 현재 상태를 유지합니다.",
-      ],
-    });
-  }
-
-  if (failingChecks.has("bt-daemon") || failingChecks.has("bt-runtime")) {
+  if (failingChecks.has("bt-config")) {
     routines.push({
       id: "bt-recovery",
       title: "블루투스 복구 루틴",
@@ -184,13 +139,14 @@ export function buildFailureRoutines({
     });
   }
 
-  if (failingChecks.has("keypad-hook") || failingChecks.has("kbds")) {
+  if (failingChecks.has("hangul-daemon")) {
     routines.push({
-      id: "keypad-recovery",
-      title: "설치 상태 정리 루틴",
+      id: "hangul-runtime",
+      title: "한글 입력 런타임 복구",
       steps: [
-        "현재 상태 카드에서 원본 백업 존재 여부를 확인합니다.",
-        "문제가 지속되면 전체 원상복구를 실행합니다.",
+        "기기를 한 번 재시작합니다.",
+        "`systemctl restart hangul-daemon`으로 데몬을 다시 시작합니다.",
+        "문제가 계속되면 설치를 한 번 더 실행합니다.",
       ],
     });
   }
@@ -212,7 +168,7 @@ export function buildFailureRoutines({
       title: "다음 확인 순서",
       steps: [
         "권장 작업 카드를 따라 다음 단계로 진행합니다.",
-        "Type Folio 또는 블루투스 키보드에서 한영 전환과 입력을 확인합니다.",
+        "현재 설치한 입력 경로에서 실제 입력을 확인합니다.",
         "이상 징후가 있으면 원상복구보다 먼저 상태 카드를 다시 새로고침합니다.",
       ],
     });
@@ -256,8 +212,12 @@ export function buildOperationTimeline({
     {
       id: "factory",
       label: "팩토리리셋 정리",
-      status: passing.has("factory-guard") ? "done" : runtimeState === "clean" ? "done" : "pending",
-      detail: passing.has("factory-guard") || runtimeState === "clean" ? "정리 경로 준비됨" : "가드 점검 필요",
+      status: runtimeState === "clean" || runtimeState === "hangul" || passing.has("factory-guard") ? "done" : "pending",
+      detail: runtimeState === "hangul"
+        ? "현재 구성에서는 별도 가드가 필요하지 않음"
+        : passing.has("factory-guard") || runtimeState === "clean"
+          ? "정리 경로 준비됨"
+          : "가드 점검 필요",
     },
   ];
 }

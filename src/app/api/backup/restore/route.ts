@@ -133,36 +133,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       password,
       [
         "mount -o remount,rw / 2>/dev/null || true",
-        "rm -rf /home/root/bt-keyboard",
+        "rm -rf /home/root/rekoit",
         "tar xzf /tmp/hangul-backup.tar.gz -C /home/root",
         "rm -f /tmp/hangul-backup.tar.gz",
-        // Re-apply: xochitl patch + install
-        "if [ -f /home/root/bt-keyboard/backup/xochitl.patched ]; then " +
-          "systemctl stop xochitl 2>/dev/null || true && " +
-          "cp /home/root/bt-keyboard/backup/xochitl.patched /usr/bin/xochitl && " +
-          "chmod 755 /usr/bin/xochitl && " +
-          "echo 'OK: xochitl patched binary restored'; " +
-        "fi",
-        "if [ -x /home/root/bt-keyboard/install.sh ]; then " +
-          "bash /home/root/bt-keyboard/install.sh 2>&1; " +
+        // Re-apply current install state
+        "if [ -x /home/root/rekoit/install.sh ]; then " +
+          "bash /home/root/rekoit/install.sh 2>&1; " +
         "else " +
           "echo 'install.sh not found, applying files manually...' && " +
           // Font
-          "if [ -f /home/root/bt-keyboard/fonts/NotoSansCJKkr-Regular.otf ]; then " +
+          "if [ -f /home/root/rekoit/fonts/NotoSansCJKkr-Regular.otf ]; then " +
             "mkdir -p /usr/share/fonts/ttf/noto && " +
-            "cp /home/root/bt-keyboard/fonts/NotoSansCJKkr-Regular.otf /usr/share/fonts/ttf/noto/ && " +
+            "cp /home/root/rekoit/fonts/NotoSansCJKkr-Regular.otf /usr/share/fonts/ttf/noto/ && " +
             "fc-cache -f 2>/dev/null || true && " +
             "echo 'OK: font restored'; " +
           "fi && " +
-          // Keyboard layouts
-          "if [ -d /home/root/bt-keyboard/kbds ]; then " +
-            "cp -r /home/root/bt-keyboard/kbds /home/root/.kbds && " +
-            "echo 'OK: keyboard layouts restored'; " +
-          "fi && " +
           // Restore service
-          "if [ -f /home/root/bt-keyboard/restore.sh ]; then " +
-            "chmod +x /home/root/bt-keyboard/restore.sh && " +
-            "bash /home/root/bt-keyboard/restore.sh 2>&1; " +
+          "if [ -f /home/root/rekoit/restore.sh ]; then " +
+            "chmod +x /home/root/rekoit/restore.sh && " +
+            "bash /home/root/rekoit/restore.sh 2>&1; " +
           "fi && " +
           "systemctl daemon-reload && " +
           "systemctl restart xochitl 2>/dev/null || true; " +

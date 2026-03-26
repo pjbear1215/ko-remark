@@ -9,10 +9,12 @@ import {
 test("renderInstallState writes shell-safe persisted flags", () => {
   assert.equal(
     renderInstallState({
+      installHangul: false,
       installBt: true,
       swapLeftCtrlCapsLock: true,
+      btDeviceAddress: "EF:CE:E6:51:BF:1C",
     }),
-    "INSTALL_KEYPAD=0\nINSTALL_BT=1\nBLUETOOTH_POWER_ON=0\nSWAP_LEFT_CTRL_CAPSLOCK=1\nKEYBOARD_LOCALES=\n",
+    "INSTALL_HANGUL=0\nINSTALL_BT=1\nBLUETOOTH_POWER_ON=0\nSWAP_LEFT_CTRL_CAPSLOCK=1\nBT_DEVICE_ADDRESS=EF:CE:E6:51:BF:1C\nKEYBOARD_LOCALES=\n",
   );
 });
 
