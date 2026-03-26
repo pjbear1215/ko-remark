@@ -12,7 +12,7 @@ test("renderInstallState writes shell-safe persisted flags", () => {
       installBt: true,
       swapLeftCtrlCapsLock: true,
     }),
-    "INSTALL_KEYPAD=0\nINSTALL_BT=1\nSWAP_LEFT_CTRL_CAPSLOCK=1\nKEYBOARD_LOCALES=\n",
+    "INSTALL_KEYPAD=0\nINSTALL_BT=1\nBLUETOOTH_POWER_ON=0\nSWAP_LEFT_CTRL_CAPSLOCK=1\nKEYBOARD_LOCALES=\n",
   );
 });
 

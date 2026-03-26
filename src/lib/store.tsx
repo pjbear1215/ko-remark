@@ -74,7 +74,7 @@ const defaultState: SetupState = {
   password: "",
   connected: false,
   eulaAgreed: false,
-  installBtKeyboard: true,
+  installBtKeyboard: false,
   swapLeftCtrlCapsLock: false,
   btDeviceAddress: "",
   btDeviceName: "",

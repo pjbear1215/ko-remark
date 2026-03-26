@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/Button";
+import BluetoothPowerControl from "@/components/BluetoothPowerControl";
 import KeyboardSwapControl from "@/components/KeyboardSwapControl";
 import SectionDivider from "@/components/SectionDivider";
 import { useSetup } from "@/lib/store";
@@ -12,8 +13,6 @@ export default function ManagePage() {
   const { state } = useSetup();
 
   const [mounted, setMounted] = useState(false);
-  const [btPowering, setBtPowering] = useState(false);
-  const [btPowerResult, setBtPowerResult] = useState<string | null>(null);
   const [fontUploading, setFontUploading] = useState(false);
   const [fontResult, setFontResult] = useState<string | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
@@ -23,27 +22,6 @@ export default function ManagePage() {
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  const handleBtPower = useCallback(
-    async (action: "on" | "off") => {
-      setBtPowering(true);
-      setBtPowerResult(null);
-      try {
-        const res = await fetch("/api/bluetooth/power", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ip: state.ip, password: state.password, action }),
-        });
-        const data = await res.json();
-        setBtPowerResult(data.success ? (action === "on" ? "활성화됨" : "비활성화됨") : `실패: ${data.error ?? "알 수 없는 오류"}`);
-      } catch {
-        setBtPowerResult("서버 오류");
-      } finally {
-        setBtPowering(false);
-      }
-    },
-    [state.ip, state.password],
-  );
 
   useEffect(() => {
     if (mounted && (!state.ip || !state.password)) {
@@ -118,25 +96,7 @@ export default function ManagePage() {
               열기
             </Button>
           </div>
-          <div
-            className="card-interactive flex items-center justify-between"
-            style={{ padding: "20px 24px" }}
-          >
-            <span className="text-[15px] font-medium" style={{ color: "var(--text-secondary)" }}>전원</span>
-            <div className="flex gap-3">
-              <Button variant="secondary" size="sm" onClick={() => handleBtPower("on")} loading={btPowering}>
-                켜기
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => handleBtPower("off")} loading={btPowering}>
-                끄기
-              </Button>
-            </div>
-          </div>
-          {btPowerResult && (
-            <p className="text-[14px] animate-fade-in" style={{ color: btPowerResult.includes("실패") ? "var(--error)" : "var(--success)", paddingLeft: "4px" }}>
-              {btPowerResult}
-            </p>
-          )}
+          <BluetoothPowerControl ip={state.ip} password={state.password} />
         </div>
 
         <div className="animate-fade-in-up stagger-4" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>

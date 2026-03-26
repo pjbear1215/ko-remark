@@ -261,7 +261,7 @@ export default function BluetoothPage() {
       try {
         const res = await fetch(`/api/bluetooth/pair-status?${params}`);
         const data = await res.json();
-        if (data.ready || (data.paired && data.trusted)) {
+        if (data.ready) {
           eventSourceRef.current?.close();
           setState({
             btDeviceAddress: selectedDevice.address,
@@ -689,7 +689,7 @@ export default function BluetoothPage() {
             {phase === "pair" ? "스캔으로" : "이전"}
           </Button>
           <div className="flex gap-3">
-            {!canGoNext && (
+            {!isManageMode && !canGoNext && (
               <Button variant="secondary" onClick={() => router.push(isManageMode ? "/manage" : "/complete")}>
                 {isManageMode ? "설정 변경으로" : "건너뛰기"}
               </Button>

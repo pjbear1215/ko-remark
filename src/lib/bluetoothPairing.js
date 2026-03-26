@@ -169,11 +169,27 @@ while [ $COUNT -lt 30 ]; do
 done
 
 if [ "$PAIRED" -eq 1 ]; then
-  echo "PAIR_SUCCESS"
   send_cmd "trust $ADDR"
-  sleep 1
+  sleep 1.5
   send_cmd "connect $ADDR"
-  sleep 2
+  READY=0
+  COUNT=0
+  while [ $COUNT -lt 15 ]; do
+    COUNT=$((COUNT + 1))
+    sleep 1
+    INFO=$(bluetoothctl info "$ADDR" 2>&1)
+    case "$INFO" in
+      *"Paired: yes"*"Trusted: yes"*"Connected: yes"*|*"Paired: yes"*"Connected: yes"*"Trusted: yes"*|*"Trusted: yes"*"Paired: yes"*"Connected: yes"*|*"Trusted: yes"*"Connected: yes"*"Paired: yes"*|*"Connected: yes"*"Paired: yes"*"Trusted: yes"*|*"Connected: yes"*"Trusted: yes"*"Paired: yes"*)
+        READY=1
+        break
+        ;;
+    esac
+  done
+  if [ "$READY" -eq 1 ]; then
+    echo "PAIR_SUCCESS"
+  else
+    echo "PAIR_PARTIAL"
+  fi
 else
   echo "PAIR_FAILED"
 fi
@@ -196,7 +212,7 @@ export function parseBluetoothInfoStatus(output) {
 }
 
 export function isBluetoothReadyStatus(status) {
-  return Boolean(status?.paired && status?.trusted);
+  return Boolean(status?.paired && status?.trusted && status?.connected);
 }
 
 export function shouldTreatPairingAttemptAsSuccess(status) {

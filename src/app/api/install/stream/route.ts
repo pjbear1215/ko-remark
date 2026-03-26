@@ -185,19 +185,23 @@ async function detectInstalledState(
     password,
     `
       strings /usr/bin/xochitl 2>/dev/null | grep -q "/home/root/.kbds/" && echo "KEYPAD=yes" || echo "KEYPAD=no"
-      if [ -f /home/root/bt-keyboard/hangul-daemon ] || systemctl is-enabled hangul-daemon 2>/dev/null | grep -q enabled; then
-        echo "BT=yes"
-      else
-        echo "BT=no"
-      fi
       if [ -f /home/root/bt-keyboard/install-state.conf ]; then
         . /home/root/bt-keyboard/install-state.conf
+        if [ "\${INSTALL_BT:-0}" = "1" ]; then
+          echo "BT=yes"
+        else
+          echo "BT=no"
+        fi
         echo "SWAP_LEFT_CTRL_CAPSLOCK=\${SWAP_LEFT_CTRL_CAPSLOCK:-0}"
         echo "LOCALES=\${KEYBOARD_LOCALES:-}"
+      elif [ -f /home/root/bt-keyboard/hangul-daemon ] || systemctl is-enabled hangul-daemon 2>/dev/null | grep -q enabled; then
+        echo "BT=yes"
       elif [ -d /home/root/.kbds ]; then
+        echo "BT=no"
         echo "SWAP_LEFT_CTRL_CAPSLOCK=0"
         echo "LOCALES=$(find /home/root/.kbds -mindepth 1 -maxdepth 1 -type d -exec basename {} \\; | sort | tr '\n' ',' | sed 's/,$//')"
       else
+        echo "BT=no"
         echo "SWAP_LEFT_CTRL_CAPSLOCK=0"
         echo "LOCALES="
       fi
@@ -242,11 +246,9 @@ async function verifyInstalledRuntime(
   if (currentState.swapLeftCtrlCapsLock !== expectedState.swapLeftCtrlCapsLock) {
     return false;
   }
-  if (expectedState.installBt) {
-    const daemonState = await runSsh(ip, password, "systemctl is-active hangul-daemon 2>/dev/null || true");
-    if (!daemonState.includes("active")) {
-      return false;
-    }
+  const daemonState = await runSsh(ip, password, "systemctl is-active hangul-daemon 2>/dev/null || true");
+  if (!daemonState.includes("active")) {
+    return false;
   }
   return true;
 }
@@ -349,6 +351,7 @@ HOOK_DROPIN="/mnt/updated${XOCHITL_HOOK_DROPIN}"
 
 INSTALL_KEYPAD=0
 INSTALL_BT=0
+BLUETOOTH_POWER_ON=0
 if [ -f "$STATE_FILE" ]; then
     . "$STATE_FILE"
 fi
@@ -376,6 +379,7 @@ CHANGED=0
 
 INSTALL_KEYPAD=0
 INSTALL_BT=0
+BLUETOOTH_POWER_ON=0
 if [ -f "$STATE_FILE" ]; then
     . "$STATE_FILE"
 fi
@@ -404,10 +408,6 @@ unmount_libepaper_mounts() {
 }
 
 ensure_tmpfs_libepaper() {
-    if [ "$INSTALL_BT" != "1" ]; then
-        return 0
-    fi
-
     src=""
     if [ -f "$LIBEPAPER_BACKUP" ]; then
         src="$LIBEPAPER_BACKUP"
@@ -433,6 +433,20 @@ ensure_tmpfs_libepaper() {
     fi
     mount -o bind "$LIBEPAPER_TMPFS" "$LIBEPAPER"
     echo "[RESTORE] tmpfs-backed libepaper mounted"
+}
+
+reconnect_paired_bluetooth_devices() {
+    CONNECTED=1
+    for addr in $(bluetoothctl paired-devices 2>/dev/null | awk '{print $2}'); do
+        [ -n "$addr" ] || continue
+        bluetoothctl connect "$addr" 2>/dev/null || true
+        sleep 2
+        if bluetoothctl info "$addr" 2>/dev/null | grep -q 'Connected: yes'; then
+            CONNECTED=0
+            break
+        fi
+    done
+    return $CONNECTED
 }
 
 XOCHITL_WAS_ACTIVE=0
@@ -574,7 +588,7 @@ if [ "$INSTALL_KEYPAD" = "1" ] && [ -d "$KBDS_DST" ] && [ -f "$XOCHITL_CONF" ]; 
 fi
 
 # hangul-daemon 서비스 복구
-if [ "$INSTALL_BT" = "1" ] && [ -f "$SERVICE_SRC" ] && [ ! -f "/etc/systemd/system/hangul-daemon.service" ]; then
+if [ -f "$SERVICE_SRC" ] && [ ! -f "/etc/systemd/system/hangul-daemon.service" ]; then
     cp "$SERVICE_SRC" /etc/systemd/system/hangul-daemon.service
     systemctl daemon-reload
     systemctl enable hangul-daemon.service 2>/dev/null || true
@@ -584,12 +598,41 @@ fi
 
 # bluetooth boot-race fix: comment out ConditionPathIsDirectory
 if [ "$INSTALL_BT" = "1" ]; then
-    sed -i 's|^ConditionPathIsDirectory=/sys/class/bluetooth|#ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
+    if grep -q '^ConditionPathIsDirectory=/sys/class/bluetooth' /usr/lib/systemd/system/bluetooth.service 2>/dev/null; then
+        sed -i 's|^ConditionPathIsDirectory=/sys/class/bluetooth|#ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
+        CHANGED=1
+    fi
 fi
 
 # BLE Privacy fix
 if [ "$INSTALL_BT" = "1" ] && [ -f /etc/bluetooth/main.conf ] && ! grep -q '^Privacy' /etc/bluetooth/main.conf; then
     sed -i '/^\\[General\\]/a Privacy = off' /etc/bluetooth/main.conf
+    CHANGED=1
+fi
+
+if [ "$INSTALL_BT" = "1" ] && [ "$BLUETOOTH_POWER_ON" = "1" ]; then
+    modprobe btnxpuart 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl reset-failed bluetooth.service 2>/dev/null || true
+    systemctl start bluetooth.service 2>/dev/null || true
+    for i in 1 2 3 4 5 6; do
+        ACTIVE=$(systemctl is-active bluetooth.service 2>/dev/null || true)
+        if [ "$ACTIVE" = "active" ]; then
+            bluetoothctl power on 2>/dev/null || true
+            sleep 1
+            POWERED=$(bluetoothctl show 2>/dev/null | grep "Powered:" | awk '{print $2}')
+            [ "$POWERED" = "yes" ] && break
+        fi
+        sleep 1
+    done
+    if [ "$POWERED" = "yes" ]; then
+        reconnect_paired_bluetooth_devices || true
+        (
+            sleep 6
+            bluetoothctl power on 2>/dev/null || true
+            reconnect_paired_bluetooth_devices || true
+        ) >/dev/null 2>&1 &
+    fi
 fi
 
 # 변경 사항 있으면 daemon-reload만 수행
@@ -1092,7 +1135,7 @@ echo "완전 삭제하려면: rm -rf /home/root/bt-keyboard"
 export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = request.nextUrl;
   const installKeypad = searchParams.get("keypad") === "true";
-  const installBt = searchParams.get("bt") !== "false";
+  const installBt = searchParams.get("bt") === "true";
   const swapLeftCtrlCapsLock = searchParams.get("swapLeftCtrlCapsLock") === "true";
   const session = getSshSessionFromRequest(request);
 
@@ -1104,10 +1147,6 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   if (installKeypad) {
     return new Response("현재는 Type Folio/BT 입력만 설치할 수 있습니다.", { status: 400 });
-  }
-
-  if (!installBt) {
-    return new Response("현재는 Type Folio/BT 입력 설치만 지원합니다.", { status: 400 });
   }
 
   const projectDir = path.join(process.cwd(), "resources");
@@ -1131,7 +1170,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         const currentState = await detectInstalledState(ip, password);
         const effectiveState: InstallState = {
           installKeypad: false,
-          installBt: true,
+          installBt,
           swapLeftCtrlCapsLock,
           locales: [],
         };
@@ -1151,10 +1190,8 @@ export async function GET(request: NextRequest): Promise<Response> {
         await downloadFont(projectDir, send);
         send("progress", { percent: 8, step: 0 });
 
-        if (effectiveState.installBt) {
-          await buildHangulDaemon(projectDir, send);
-          send("progress", { percent: 20, step: 0 });
-        }
+        await buildHangulDaemon(projectDir, send);
+        send("progress", { percent: 20, step: 0 });
 
         send("step", { step: 0, name: "소스에서 바이너리 빌드 완료", status: "complete" });
 
@@ -1211,7 +1248,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         // === Step 2: 파일 업로드 ===
         const filesToUpload: FileMapping[] = [
           ...FILES_COMMON,
-          ...(effectiveState.installBt ? FILES_BT : []),
+          ...FILES_BT,
         ];
 
         for (let i = 0; i < filesToUpload.length; i++) {
@@ -1304,50 +1341,48 @@ export async function GET(request: NextRequest): Promise<Response> {
         send("progress", { percent: 80, step: 4 });
 
         // === Step 5: 자동 복구 서비스 설치 ===
-        if (effectiveState.installBt) {
-          send("step", { step: 5, name: "부팅 시 자동 복구 서비스 설치", status: "running" });
-          send("progress", { percent: 85, step: 5 });
+        send("step", { step: 5, name: "부팅 시 자동 복구 서비스 설치", status: "running" });
+        send("progress", { percent: 85, step: 5 });
 
-          const restoreDir = path.join(os.tmpdir(), "ko-remark-install");
-          const restoreScriptPath = path.join(restoreDir, "restore.sh");
-          const restoreServicePath = path.join(restoreDir, "hangul-restore.service");
-          fs.mkdirSync(restoreDir, { recursive: true });
-          fs.writeFileSync(restoreScriptPath, RESTORE_SCRIPT);
-          fs.writeFileSync(restoreServicePath, RESTORE_SERVICE);
+        const restoreDir = path.join(os.tmpdir(), "ko-remark-install");
+        const restoreScriptPath = path.join(restoreDir, "restore.sh");
+        const restoreServicePath = path.join(restoreDir, "hangul-restore.service");
+        fs.mkdirSync(restoreDir, { recursive: true });
+        fs.writeFileSync(restoreScriptPath, RESTORE_SCRIPT);
+        fs.writeFileSync(restoreServicePath, RESTORE_SERVICE);
 
-          await runScp(
-            ip,
-            password,
-            restoreScriptPath,
-            "/home/root/bt-keyboard/restore.sh",
-          );
-          await runScp(
-            ip,
-            password,
-            restoreServicePath,
-            "/home/root/bt-keyboard/hangul-restore.service",
-          );
-          await runSsh(ip, password, "chmod +x /home/root/bt-keyboard/restore.sh");
-          send("log", { line: "OK: restore.sh 생성" });
+        await runScp(
+          ip,
+          password,
+          restoreScriptPath,
+          "/home/root/bt-keyboard/restore.sh",
+        );
+        await runScp(
+          ip,
+          password,
+          restoreServicePath,
+          "/home/root/bt-keyboard/hangul-restore.service",
+        );
+        await runSsh(ip, password, "chmod +x /home/root/bt-keyboard/restore.sh");
+        send("log", { line: "OK: restore.sh 생성" });
 
-          await runSsh(
-            ip,
-            password,
-            "cp /home/root/bt-keyboard/hangul-restore.service /etc/systemd/system/hangul-restore.service && systemctl daemon-reload && systemctl enable hangul-restore.service 2>/dev/null || true",
-          );
-          send("log", { line: "OK: hangul-restore.service 생성" });
-          send("log", { line: "OK: hangul-restore 서비스 활성화" });
+        await runSsh(
+          ip,
+          password,
+          "cp /home/root/bt-keyboard/hangul-restore.service /etc/systemd/system/hangul-restore.service && systemctl daemon-reload && systemctl enable hangul-restore.service 2>/dev/null || true",
+        );
+        send("log", { line: "OK: hangul-restore.service 생성" });
+        send("log", { line: "OK: hangul-restore 서비스 활성화" });
 
-          await runSsh(
-            ip,
-            password,
-            `ROOTFS_DEV=$(mount | grep ' / ' | head -n1 | awk '{print $1}') && mkdir -p /mnt/rootfs && mount -o rw "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null && mkdir -p /mnt/rootfs/etc/systemd/system/multi-user.target.wants && cp /etc/systemd/system/hangul-restore.service /mnt/rootfs/etc/systemd/system/hangul-restore.service && ln -sf /etc/systemd/system/hangul-restore.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/hangul-restore.service && sync && umount /mnt/rootfs 2>/dev/null || true`,
-          );
-          send("log", { line: "OK: hangul-restore.service -> rootfs (reboot-safe)" });
+        await runSsh(
+          ip,
+          password,
+          `ROOTFS_DEV=$(mount | grep ' / ' | head -n1 | awk '{print $1}') && mkdir -p /mnt/rootfs && mount -o rw "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null && mkdir -p /mnt/rootfs/etc/systemd/system/multi-user.target.wants && cp /etc/systemd/system/hangul-restore.service /mnt/rootfs/etc/systemd/system/hangul-restore.service && ln -sf /etc/systemd/system/hangul-restore.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/hangul-restore.service && sync && umount /mnt/rootfs 2>/dev/null || true`,
+        );
+        send("log", { line: "OK: hangul-restore.service -> rootfs (reboot-safe)" });
 
-          send("log", { line: "OK: install.sh가 post-update / factory-guard / swupdate 구성을 생성" });
-          send("step", { step: 5, name: "부팅 시 자동 복구 서비스 설치 완료", status: "complete" });
-        }
+        send("log", { line: "OK: install.sh가 post-update / factory-guard / swupdate 구성을 생성" });
+        send("step", { step: 5, name: "부팅 시 자동 복구 서비스 설치 완료", status: "complete" });
 
         send("progress", { percent: 100, step: 5 });
         send("complete", { success: true });

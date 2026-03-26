@@ -47,6 +47,19 @@ function runSsh(
   });
 }
 
+function updateBluetoothPowerStateScript(value: "0" | "1"): string {
+  return `
+STATE_FILE="/home/root/bt-keyboard/install-state.conf"
+if [ -f "$STATE_FILE" ]; then
+  if grep -q '^BLUETOOTH_POWER_ON=' "$STATE_FILE" 2>/dev/null; then
+    sed -i 's/^BLUETOOTH_POWER_ON=.*/BLUETOOTH_POWER_ON=${value}/' "$STATE_FILE" 2>/dev/null || true
+  else
+    printf '\nBLUETOOTH_POWER_ON=${value}\n' >> "$STATE_FILE"
+  fi
+fi
+`;
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const body = await request.json();
   const { ip, password, action } = body;
@@ -66,25 +79,50 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (action === "on") {
       const script = `
 modprobe btnxpuart 2>/dev/null || true
-sleep 1
-bluetoothctl power on 2>/dev/null
-sleep 1
-POWERED=$(bluetoothctl show 2>/dev/null | grep "Powered:" | awk '{print $2}')
+systemctl reset-failed bluetooth.service 2>/dev/null || true
+systemctl start bluetooth.service 2>/dev/null || true
+ACTIVE=inactive
+POWERED=no
+for i in 1 2 3 4 5 6; do
+  ACTIVE=$(systemctl is-active bluetooth.service 2>/dev/null || true)
+  if [ "$ACTIVE" = "active" ]; then
+    bluetoothctl power on 2>/dev/null || true
+    sleep 1
+    POWERED=$(bluetoothctl show 2>/dev/null | grep "Powered:" | awk '{print $2}')
+    [ -n "$POWERED" ] || POWERED=no
+    [ "$POWERED" = "yes" ] && break
+  fi
+  sleep 1
+done
 echo "POWERED:$POWERED"
+echo "ACTIVE:$ACTIVE"
+if [ "$ACTIVE" = "active" ] && [ "$POWERED" = "yes" ]; then
+${updateBluetoothPowerStateScript("1")}
+fi
 `;
       const output = await runSsh(ip, password, script);
       const powered = output.includes("POWERED:yes");
-      return NextResponse.json({ success: powered, powered });
+      const active = output.includes("ACTIVE:active");
+      return NextResponse.json({ success: active && powered, powered, active });
     } else {
       const script = `
-bluetoothctl power off 2>/dev/null
+bluetoothctl power off 2>/dev/null || true
 sleep 1
-POWERED=$(bluetoothctl show 2>/dev/null | grep "Powered:" | awk '{print $2}')
-echo "POWERED:$POWERED"
+systemctl stop bluetooth.service 2>/dev/null || true
+for i in 1 2 3 4 5; do
+  ACTIVE=$(systemctl is-active bluetooth.service 2>/dev/null || true)
+  [ "$ACTIVE" != "active" ] && break
+  sleep 1
+done
+ACTIVE=$(systemctl is-active bluetooth.service 2>/dev/null || true)
+echo "ACTIVE:$ACTIVE"
+if [ "$ACTIVE" != "active" ]; then
+${updateBluetoothPowerStateScript("0")}
+fi
 `;
       const output = await runSsh(ip, password, script);
-      const powered = output.includes("POWERED:yes");
-      return NextResponse.json({ success: !powered, powered });
+      const active = output.includes("ACTIVE:active");
+      return NextResponse.json({ success: !active, powered: false, active });
     }
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);

@@ -82,21 +82,24 @@ echo ""
 # 설치 모드: env 우선, 없으면 마지막 설치 상태 유지
 STATE_KEYPAD=0
 STATE_BT=0
+STATE_BLUETOOTH_POWER_ON=0
 STATE_SWAP_LEFT_CTRL_CAPSLOCK=0
 STATE_LOCALES=""
 if [ -f "$STATE_FILE" ]; then
     . "$STATE_FILE"
     STATE_KEYPAD=${INSTALL_KEYPAD:-0}
     STATE_BT=${INSTALL_BT:-0}
+    STATE_BLUETOOTH_POWER_ON=${BLUETOOTH_POWER_ON:-0}
     STATE_SWAP_LEFT_CTRL_CAPSLOCK=${SWAP_LEFT_CTRL_CAPSLOCK:-0}
     STATE_LOCALES=${KEYBOARD_LOCALES:-}
 fi
 INSTALL_KEYPAD=0
 INSTALL_BT=${INSTALL_BT:-$STATE_BT}
+BLUETOOTH_POWER_ON=${BLUETOOTH_POWER_ON:-$STATE_BLUETOOTH_POWER_ON}
 SWAP_LEFT_CTRL_CAPSLOCK=${SWAP_LEFT_CTRL_CAPSLOCK:-$STATE_SWAP_LEFT_CTRL_CAPSLOCK}
 KEYBOARD_LOCALES=""
-printf 'INSTALL_KEYPAD=%s\nINSTALL_BT=%s\nSWAP_LEFT_CTRL_CAPSLOCK=%s\nKEYBOARD_LOCALES=%s\n' "$INSTALL_KEYPAD" "$INSTALL_BT" "$SWAP_LEFT_CTRL_CAPSLOCK" "$KEYBOARD_LOCALES" > "$STATE_FILE"
-echo "  Mode: keypad=removed, bt=$INSTALL_BT, swapCtrlCaps=$SWAP_LEFT_CTRL_CAPSLOCK"
+printf 'INSTALL_KEYPAD=%s\nINSTALL_BT=%s\nBLUETOOTH_POWER_ON=%s\nSWAP_LEFT_CTRL_CAPSLOCK=%s\nKEYBOARD_LOCALES=%s\n' "$INSTALL_KEYPAD" "$INSTALL_BT" "$BLUETOOTH_POWER_ON" "$SWAP_LEFT_CTRL_CAPSLOCK" "$KEYBOARD_LOCALES" > "$STATE_FILE"
+echo "  Mode: keypad=removed, bt=$INSTALL_BT, btPower=$BLUETOOTH_POWER_ON, swapCtrlCaps=$SWAP_LEFT_CTRL_CAPSLOCK"
 echo ""
 
 # 1. Prepare filesystem
@@ -107,11 +110,16 @@ echo "  OK: Active rootfs mounted rw"
 echo "[1.5/9] SKIP: on-screen keyboard support removed"
 
 # 2. btnxpuart module auto-load
-echo "[2/10] Setting up btnxpuart module..."
-mkdir -p /etc/modules-load.d
-echo "btnxpuart" > /etc/modules-load.d/btnxpuart.conf
-modprobe btnxpuart 2>/dev/null || true
-echo "  OK: btnxpuart.conf written"
+if [ "$INSTALL_BT" = "1" ]; then
+    echo "[2/10] Setting up btnxpuart module..."
+    mkdir -p /etc/modules-load.d
+    echo "btnxpuart" > /etc/modules-load.d/btnxpuart.conf
+    modprobe btnxpuart 2>/dev/null || true
+    echo "  OK: btnxpuart.conf written"
+else
+    echo "[2/10] SKIP: bluetooth module auto-load disabled"
+    rm -f /etc/modules-load.d/btnxpuart.conf
+fi
 
 # 3. Korean font
 echo "[3/10] Installing Korean font..."
@@ -129,54 +137,55 @@ echo "[4/10] SKIP: on-screen keyboard layouts removed"
 echo "[5/10] SKIP: on-screen keyboard hook removed"
 
 # 6. Bluetooth pairing backup/restore
-echo "[6/10] Handling Bluetooth pairing..."
-if [ -d "$BT_SRC" ] && ls "$BT_SRC"/*/cache 2>/dev/null | head -n 1 >/dev/null 2>&1; then
-    mkdir -p "$BT_BACKUP"
-    cp -a "$BT_SRC"/ "$BT_BACKUP/bluetooth_backup/" 2>/dev/null || true
-    echo "  OK: Current pairing backed up"
-elif [ -d "$BT_BACKUP/bluetooth_backup" ]; then
-    cp -a "$BT_BACKUP/bluetooth_backup/"* "$BT_SRC/" 2>/dev/null || true
-    systemctl restart bluetooth 2>/dev/null || true
-    echo "  OK: Pairing restored from backup"
-else
-    echo "  SKIP: No pairing info (manual pairing needed)"
-fi
-
-# 7. hangul-daemon systemd service (BT keyboard) — bt only
 if [ "$INSTALL_BT" = "1" ]; then
-    echo "[7/10] Installing hangul-daemon service..."
-    systemctl stop xochitl 2>/dev/null || true
-    systemctl stop hangul-daemon.service 2>/dev/null || true
-    killall hangul-daemon 2>/dev/null || true
-    # Reset any existing libepaper tmpfs mount before reinstalling.
-    unmount_libepaper_mounts
-    rm -f "$LIBEPAPER_TMPFS"
-    sleep 1
-
-    if [ -f "$SERVICE_SRC" ]; then
-        cp "$SERVICE_SRC" /etc/systemd/system/hangul-daemon.service
-        mkdir -p /etc/systemd/system/multi-user.target.wants
-        ln -sf /etc/systemd/system/hangul-daemon.service /etc/systemd/system/multi-user.target.wants/hangul-daemon.service
-
-        # Fix bluetooth.service boot race: comment out ConditionPathIsDirectory
-        # so bluetooth starts even if /sys/class/bluetooth isn't ready yet
-        sed -i 's|^ConditionPathIsDirectory=/sys/class/bluetooth|#ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
-
-        # Disable BLE Privacy — NXP chip rejects RPA, breaking LE scan
-        if [ -f /etc/bluetooth/main.conf ] && ! grep -q '^Privacy' /etc/bluetooth/main.conf; then
-            sed -i '/^\[General\]/a Privacy = off' /etc/bluetooth/main.conf
-        fi
-
-        systemctl daemon-reload
-        systemctl enable hangul-daemon.service 2>/dev/null || true
-        echo "  OK: hangul-daemon service installed"
-        echo "  OK: bluetooth boot-race fix installed"
-        echo "  OK: BLE privacy disabled (NXP compatibility)"
+    echo "[6/10] Handling Bluetooth pairing..."
+    if [ -d "$BT_SRC" ] && ls "$BT_SRC"/*/cache 2>/dev/null | head -n 1 >/dev/null 2>&1; then
+        mkdir -p "$BT_BACKUP"
+        cp -a "$BT_SRC"/ "$BT_BACKUP/bluetooth_backup/" 2>/dev/null || true
+        echo "  OK: Current pairing backed up"
+    elif [ -d "$BT_BACKUP/bluetooth_backup" ]; then
+        cp -a "$BT_BACKUP/bluetooth_backup/"* "$BT_SRC/" 2>/dev/null || true
+        systemctl restart bluetooth 2>/dev/null || true
+        echo "  OK: Pairing restored from backup"
     else
-        echo "  SKIP: Service file not found ($SERVICE_SRC)"
+        echo "  SKIP: No pairing info (manual pairing needed)"
     fi
 else
-    echo "[7/10] SKIP: hangul-daemon (bt not selected)"
+    echo "[6/10] SKIP: bluetooth pairing restore not requested"
+fi
+
+# 7. hangul-daemon systemd service
+echo "[7/10] Installing hangul-daemon service..."
+systemctl stop xochitl 2>/dev/null || true
+systemctl stop hangul-daemon.service 2>/dev/null || true
+killall hangul-daemon 2>/dev/null || true
+# Reset any existing libepaper tmpfs mount before reinstalling.
+unmount_libepaper_mounts
+rm -f "$LIBEPAPER_TMPFS"
+sleep 1
+
+if [ -f "$SERVICE_SRC" ]; then
+    cp "$SERVICE_SRC" /etc/systemd/system/hangul-daemon.service
+    mkdir -p /etc/systemd/system/multi-user.target.wants
+    ln -sf /etc/systemd/system/hangul-daemon.service /etc/systemd/system/multi-user.target.wants/hangul-daemon.service
+    systemctl daemon-reload
+    systemctl enable hangul-daemon.service 2>/dev/null || true
+    echo "  OK: hangul-daemon service installed"
+else
+    echo "  SKIP: Service file not found ($SERVICE_SRC)"
+fi
+
+if [ "$INSTALL_BT" = "1" ]; then
+    sed -i 's|^ConditionPathIsDirectory=/sys/class/bluetooth|#ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
+    if [ -f /etc/bluetooth/main.conf ] && ! grep -q '^Privacy' /etc/bluetooth/main.conf; then
+        sed -i '/^\[General\]/a Privacy = off' /etc/bluetooth/main.conf
+    fi
+    echo "  OK: bluetooth boot-race fix installed"
+    echo "  OK: BLE privacy disabled (NXP compatibility)"
+else
+    sed -i 's|^##*ConditionPathIsDirectory=/sys/class/bluetooth|ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
+    sed -i '/^Privacy = off$/d' /etc/bluetooth/main.conf 2>/dev/null || true
+    echo "  OK: bluetooth runtime changes cleared"
 fi
 
 # 8. libepaper.so backup
@@ -189,7 +198,7 @@ if [ -f "$LIBEPAPER" ]; then
         echo "  OK: Backup already exists"
     fi
 fi
-if [ "$INSTALL_BT" = "1" ] && [ -f "$LIBEPAPER_BACKUP" -o -f "$LIBEPAPER" ]; then
+if [ -f "$LIBEPAPER_BACKUP" -o -f "$LIBEPAPER" ]; then
     ensure_tmpfs_libepaper
     echo "  OK: tmpfs-backed libepaper mounted"
 fi
@@ -533,19 +542,21 @@ Environment=LD_PRELOAD=/opt/bt-keyboard/hangul_hook.so
 HOOKCONF_EOF
             fi
 
-            # hangul-daemon service (BT keyboard)
-            if [ "$INSTALL_BT" = "1" ] && [ -f /etc/systemd/system/hangul-daemon.service ]; then
+            # hangul-daemon service
+            if [ -f /etc/systemd/system/hangul-daemon.service ]; then
                 cp /etc/systemd/system/hangul-daemon.service /mnt/rootfs/etc/systemd/system/
                 mkdir -p /mnt/rootfs/etc/systemd/system/multi-user.target.wants
                 ln -sf /etc/systemd/system/hangul-daemon.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/hangul-daemon.service
+            fi
 
-                # bluetooth boot-race fix: comment out ConditionPathIsDirectory on rootfs
+            if [ "$INSTALL_BT" = "1" ]; then
                 sed -i 's|^ConditionPathIsDirectory=/sys/class/bluetooth|#ConditionPathIsDirectory=/sys/class/bluetooth|' /mnt/rootfs/usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
-
-                # BLE privacy fix
                 if [ -f /mnt/rootfs/etc/bluetooth/main.conf ] && ! grep -q '^Privacy' /mnt/rootfs/etc/bluetooth/main.conf; then
                     sed -i '/^\[General\]/a Privacy = off' /mnt/rootfs/etc/bluetooth/main.conf
                 fi
+            else
+                sed -i 's|^##*ConditionPathIsDirectory=/sys/class/bluetooth|ConditionPathIsDirectory=/sys/class/bluetooth|' /mnt/rootfs/usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
+                sed -i '/^Privacy = off$/d' /mnt/rootfs/etc/bluetooth/main.conf 2>/dev/null || true
             fi
 
             # swupdate conf.d (post-update hook 영속화)
@@ -594,8 +605,8 @@ elif [ -f "$FONT_DST" ]; then
     sleep 3
 fi
 
-# Start hangul-daemon (BT keyboard) — bt only
-if [ "$INSTALL_BT" = "1" ] && [ -f "$BASEDIR/hangul-daemon" ]; then
+# Start hangul-daemon
+if [ -f "$BASEDIR/hangul-daemon" ]; then
     echo "  Starting hangul-daemon..."
     systemctl start hangul-daemon.service 2>/dev/null || true
     sleep 2
@@ -660,15 +671,15 @@ if [ "$INSTALL_KEYPAD" = "1" ]; then
     fi
 fi
 
-if [ "$INSTALL_BT" = "1" ]; then
-    TOTAL=$((TOTAL+1))
-    if systemctl is-active hangul-daemon.service >/dev/null 2>&1; then
-        echo " [OK] BT keyboard daemon: running"
-        PASS=$((PASS+1))
-    else
-        echo " [--] BT keyboard daemon: not running"
-    fi
+TOTAL=$((TOTAL+1))
+if systemctl is-active hangul-daemon.service >/dev/null 2>&1; then
+    echo " [OK] Hangul daemon: running"
+    PASS=$((PASS+1))
+else
+    echo " [--] Hangul daemon: not running"
+fi
 
+if [ "$INSTALL_BT" = "1" ]; then
     TOTAL=$((TOTAL+1))
     if lsmod 2>/dev/null | grep -q btnxpuart; then
         echo " [OK] Bluetooth module: loaded"

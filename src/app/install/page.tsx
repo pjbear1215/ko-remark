@@ -50,14 +50,13 @@ export default function InstallPage() {
       return;
     }
 
-    setState({ installBtKeyboard: true });
     setStatus("installing");
     setLogs([]);
     setErrors([]);
     setProgress(0);
 
     const params = new URLSearchParams({
-      bt: "true",
+      bt: state.installBtKeyboard ? "true" : "false",
       swapLeftCtrlCapsLock: state.swapLeftCtrlCapsLock ? "true" : "false",
     });
 
@@ -142,7 +141,7 @@ export default function InstallPage() {
   };
 
   const handleNext = () => {
-    router.push("/bluetooth");
+    router.push(state.installBtKeyboard ? "/bluetooth" : "/complete");
   };
 
   return (
@@ -161,7 +160,7 @@ export default function InstallPage() {
             className="mt-3 text-[17px]"
             style={{ color: "var(--text-muted)" }}
           >
-            Type Folio와 블루투스 키보드용 한글 입력을 설치합니다.
+            기본 한글 입력을 설치합니다. 블루투스 키보드 지원은 선택 사항입니다.
           </p>
         </div>
 
@@ -178,9 +177,15 @@ export default function InstallPage() {
                 설치 구성
               </p>
               <p className="text-[13px] mt-1" style={{ color: "var(--text-muted)" }}>
-                Type Folio 및 블루투스 키보드용 한글 입력을 설치합니다.
+                기본 한글 입력은 항상 설치되고, 블루투스 키보드 지원은 별도로 선택할 수 있습니다.
               </p>
             </div>
+            <Checkbox
+              checked={state.installBtKeyboard}
+              onChange={(checked) => setState({ installBtKeyboard: checked })}
+              label="블루투스 키보드 지원 함께 설치"
+              description="켜면 블루투스 서비스와 페어링 경로를 같이 준비합니다. 끄면 일반 한글 입력만 설치합니다."
+            />
             <Checkbox
               checked={state.swapLeftCtrlCapsLock}
               onChange={(checked) => setState({ swapLeftCtrlCapsLock: checked })}

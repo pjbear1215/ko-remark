@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
+import BluetoothPowerControl from "@/components/BluetoothPowerControl";
 import KeyboardSwapControl from "@/components/KeyboardSwapControl";
 import SectionDivider from "@/components/SectionDivider";
 import StatusCheck from "@/components/StatusCheck";
@@ -22,8 +23,6 @@ export default function CompletePage() {
   const { state, setState } = useSetup();
   const [results, setResults] = useState<VerifyResult[]>([]);
   const [verifying, setVerifying] = useState(true);
-  const [btPowering, setBtPowering] = useState(false);
-  const [btPowerResult, setBtPowerResult] = useState<string | null>(null);
   const [btRemoving, setBtRemoving] = useState(false);
   const [btRemoveResult, setBtRemoveResult] = useState<string | null>(null);
   const [fontUploading, setFontUploading] = useState(false);
@@ -64,31 +63,6 @@ export default function CompletePage() {
     };
     verify();
   }, [allowed, state.installBtKeyboard, state.ip, state.password]);
-
-  const handleBtPower = useCallback(
-    async (action: "on" | "off") => {
-      setBtPowering(true);
-      setBtPowerResult(null);
-      try {
-        const res = await fetch("/api/bluetooth/power", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ip: state.ip, password: state.password, action }),
-        });
-        const data = await res.json();
-        if (data.success) {
-          setBtPowerResult(action === "on" ? "활성화됨" : "비활성화됨");
-        } else {
-          setBtPowerResult(`실패: ${data.error ?? "알 수 없는 오류"}`);
-        }
-      } catch {
-        setBtPowerResult("서버 오류");
-      } finally {
-        setBtPowering(false);
-      }
-    },
-    [state.ip, state.password],
-  );
 
   const handleBtRemove = useCallback(
     async (address: string) => {
@@ -262,24 +236,7 @@ export default function CompletePage() {
                 </p>
               )}
 
-              <div className="flex items-center justify-between py-2">
-                <span className="text-[16px]" style={{ color: "var(--text-secondary)" }}>
-                  전원
-                </span>
-                <div className="flex gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => handleBtPower("on")} loading={btPowering}>
-                    켜기
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => handleBtPower("off")} loading={btPowering}>
-                    끄기
-                  </Button>
-                </div>
-              </div>
-              {btPowerResult && (
-                <p className="text-[14px]" style={{ color: btPowerResult.includes("실패") ? "var(--error)" : "var(--success)" }}>
-                  {btPowerResult}
-                </p>
-              )}
+              <BluetoothPowerControl ip={state.ip} password={state.password} />
             </div>
 
             {/* 폰트 교체 */}

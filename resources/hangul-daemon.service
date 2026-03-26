@@ -1,14 +1,8 @@
 [Unit]
-Description=Hangul Keyboard Daemon for BT Keyboard
-After=xochitl.service bluetooth.service
-Wants=bluetooth.target
+Description=Hangul Keyboard Daemon
 
 [Service]
 Type=simple
-ExecStartPre=/bin/sh -c 'modprobe btnxpuart 2>/dev/null || true'
-ExecStartPre=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do [ -d /sys/class/bluetooth ] && break; sleep 1; done'
-ExecStartPre=/bin/sh -c 'hciconfig hci0 up 2>/dev/null || true'
-ExecStartPre=/bin/sh -c 'mount -o remount,rw / 2>/dev/null || true'
 ExecStart=/home/root/bt-keyboard/hangul-daemon
 Restart=on-failure
 RestartSec=5

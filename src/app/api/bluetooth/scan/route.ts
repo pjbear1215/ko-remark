@@ -38,6 +38,8 @@ sleep 0.5
 
 # Load BT kernel module if not loaded
 modprobe btnxpuart 2>/dev/null || true
+systemctl reset-failed bluetooth.service 2>/dev/null || true
+systemctl start bluetooth.service 2>/dev/null || true
 sleep 1
 
 # Check if BT adapter exists
@@ -70,7 +72,8 @@ case "$SCAN_OUT" in
     killall bluetoothctl 2>/dev/null || true
     killall -9 bluetoothd 2>/dev/null || true
     sleep 3
-    # bluetoothd auto-restarts via systemd
+    systemctl reset-failed bluetooth.service 2>/dev/null || true
+    systemctl start bluetooth.service 2>/dev/null || true
     bluetoothctl power on 2>/dev/null
     sleep 1
     bluetoothctl pairable on 2>/dev/null

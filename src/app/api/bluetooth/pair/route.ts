@@ -16,6 +16,46 @@ import {
   sanitizeBluetoothLine,
 } from "@/lib/bluetoothPairing.js";
 
+function persistBluetoothPowerState(
+  session: { ip: string; password: string },
+  value: "0" | "1",
+): Promise<void> {
+  return new Promise((resolve) => {
+    const env = {
+      ...process.env,
+      SSHPASS: session.password,
+      PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin`,
+    };
+    const proc = spawn(
+      "sshpass",
+      [
+        "-e",
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=20",
+        `root@${session.ip}`,
+        `
+STATE_FILE="/home/root/bt-keyboard/install-state.conf"
+if [ -f "$STATE_FILE" ]; then
+  if grep -q '^BLUETOOTH_POWER_ON=' "$STATE_FILE" 2>/dev/null; then
+    sed -i 's/^BLUETOOTH_POWER_ON=.*/BLUETOOTH_POWER_ON=${value}/' "$STATE_FILE" 2>/dev/null || true
+  else
+    printf '\nBLUETOOTH_POWER_ON=${value}\n' >> "$STATE_FILE"
+  fi
+fi
+        `,
+      ],
+      { env },
+    );
+    proc.on("close", () => resolve());
+    proc.on("error", () => resolve());
+  });
+}
+
 export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = request.nextUrl;
   const address = searchParams.get("address") ?? "";
@@ -139,6 +179,7 @@ export async function GET(request: NextRequest): Promise<Response> {
             connectProc.on("error", () => resolve());
           });
 
+          await persistBluetoothPowerState(session, "1");
           send("log", { line: `ALREADY_PAIRED: ${readyAddress}` });
           send("paired", { success: true });
           send("complete", {});
@@ -196,6 +237,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         let passkeySent = false;
         let pairResultSent = false;
         let pairStarted = false;
+        let persistPowerOnAfterProcess = false;
 
         const handleChunk = (data: Buffer, source: "stdout" | "stderr"): void => {
           const output = data.toString();
@@ -244,10 +286,10 @@ export async function GET(request: NextRequest): Promise<Response> {
             if (!pairResultSent) {
               if (
                 stripped.includes("PAIR_SUCCESS") ||
-                stripped.includes("Pairing successful") ||
-                (pairStarted && stripped.includes("Paired: yes"))
+                stripped.includes("Pairing successful")
               ) {
                 pairResultSent = true;
+                persistPowerOnAfterProcess = true;
                 send("paired", { success: true });
               }
             }
@@ -255,6 +297,7 @@ export async function GET(request: NextRequest): Promise<Response> {
             // 페어링 실패
             if (!pairResultSent && pairStarted) {
               if (
+                stripped.includes("PAIR_PARTIAL") ||
                 stripped.includes("PAIR_FAILED") ||
                 (stripped.includes("Failed to pair") && !stripped.includes("InProgress")) ||
                 stripped.includes("Authentication Failed") ||
@@ -377,6 +420,7 @@ export async function GET(request: NextRequest): Promise<Response> {
           }
 
           if (shouldTreatPairingAttemptAsSuccess(finalInfoStatus)) {
+            await persistBluetoothPowerState(session, "1");
             pairResultSent = true;
             send("paired", { success: true });
           } else {
@@ -412,6 +456,10 @@ export async function GET(request: NextRequest): Promise<Response> {
               });
             }
           }
+        }
+
+        if (persistPowerOnAfterProcess) {
+          await persistBluetoothPowerState(session, "1");
         }
 
         send("complete", {});

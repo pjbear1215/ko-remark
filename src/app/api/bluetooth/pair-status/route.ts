@@ -50,7 +50,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     const connected = result.includes("Connected: yes");
     const trusted = result.includes("Trusted: yes");
 
-    return Response.json({ paired, connected, trusted, ready: paired && trusted });
+    return Response.json({ paired, connected, trusted, ready: paired && trusted && connected });
   } catch {
     return Response.json({ error: "확인 실패" }, { status: 500 });
   }
