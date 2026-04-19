@@ -36,22 +36,22 @@ export default function UninstallPage() {
 
   const pageTitle = isPartialRemove
     ? removeTarget === "hangul"
-      ? "한글 입력 제거"
-      : "블루투스 제거"
-    : "설치제거";
+      ? "한글 입력 엔진 제거"
+      : "블루투스 도우미 제거"
+    : "전체 원상복구";
   const pageDescription = isPartialRemove
     ? removeTarget === "hangul"
-      ? "한글 입력 관련 항목만 제거하고 블루투스 관련 구성은 유지합니다."
-      : "블루투스 관련 항목만 제거하고 한글 입력 구성은 유지합니다."
-    : "설치된 한글 입력/블루투스 설치를 모두 제거하고 원본 상태로 복원합니다.";
+      ? "한글 입력 엔진 관련 항목만 제거하고 블루투스 도우미 관련 구성은 유지합니다."
+      : "블루투스 도우미 관련 항목만 제거하고 한글 입력 엔진 구성은 유지합니다."
+    : "설치된 한글 입력 엔진/블루투스 도우미 설치를 모두 제거하고 원본 상태로 복원합니다.";
   const readyGuideTitle = isPartialRemove ? "부분 제거 안내" : "복구 작업 안내";
   const completeMessage = isPartialRemove
     ? removeTarget === "hangul"
-      ? "한글 입력 제거가 완료되었습니다."
-      : "블루투스 제거가 완료되었습니다."
-    : "설치제거가 완료되었습니다.";
+      ? "한글 입력 엔진 제거가 완료되었습니다."
+      : "블루투스 도우미 제거가 완료되었습니다."
+    : "전체 원상복구가 완료되었습니다.";
   const errorContext = isPartialRemove ? "부분 제거" : "원상복구";
-  const startLabel = isPartialRemove ? "제거시작" : "제거시작";
+  const startLabel = isPartialRemove ? "제거 시작" : "제거 시작";
 
   const startUninstall = async (): Promise<void> => {
     statusRef.current = "uninstalling";
@@ -71,7 +71,7 @@ export default function UninstallPage() {
     }
 
     if (isPartialRemove) {
-      setCurrentStep(removeTarget === "hangul" ? "한글 입력 제거" : "블루투스 제거");
+      setCurrentStep(removeTarget === "hangul" ? "한글 입력 엔진 제거" : "블루투스 도우미 제거");
       setProgress(20);
       try {
         const res = await fetch("/api/manage/remove", {
@@ -177,118 +177,161 @@ export default function UninstallPage() {
 
   return (
     <div className="animate-fade-in-up">
-      <div className="space-y-10">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1
-              className="text-[36px] font-bold leading-tight"
-              style={{ color: "var(--text-primary)" }}
-            >
-              {pageTitle}
-            </h1>
-          <p
-            className="mt-3 text-[17px]"
-            style={{ color: "var(--text-muted)" }}
+      <div className="space-y-6">
+        <div>
+          <h1
+            className="text-[32px] font-bold tracking-tight"
+            style={{ color: "#000000" }}
           >
+            {pageTitle}
+          </h1>
+          <p className="text-[15px] mt-2 font-medium" style={{ color: "#666666" }}>
             {pageDescription}
           </p>
-          </div>
-          <Button variant="ghost" onClick={() => router.push(returnPath)} disabled={status === "uninstalling"}>
-            작업 선택으로
-          </Button>
         </div>
 
-        {/* 경고 */}
-        {status === "ready" && (
-          <div className="space-y-4">
-            <div
-              className="p-6 rounded-xl animate-fade-in-up stagger-1"
-              style={{ backgroundColor: "var(--warning-light)", border: "1px solid var(--warning)" }}
-            >
-              <p className="font-medium text-[17px]" style={{ color: "var(--text-primary)" }}>
-                {readyGuideTitle}
-              </p>
-              <ul className="mt-3 space-y-1.5 text-[15px]" style={{ color: "var(--text-muted)" }}>
-                {isPartialRemove ? (
-                  <>
-                    <li>선택한 기능에 해당하는 항목만 제거합니다</li>
-                    <li>다른 기능이 남아 있으면 공통 복구 경로는 유지됩니다</li>
-                    <li>ReKoIt 디렉토리 안의 해당 기능 관련 파일도 함께 정리됩니다</li>
-                  </>
-                ) : (
-                  <>
-                    <li>설치된 항목을 자동 감지하여 해당 항목만 복구합니다</li>
-                    <li>양쪽 파티션(현재 + 비활성) 모두 정리됩니다</li>
-                    <li>펌웨어 업데이트 보호 장치도 함께 제거됩니다</li>
-                    <li>한글 폰트도 함께 삭제됩니다</li>
-                  </>
-                )}
-              </ul>
-            </div>
-          </div>
-        )}
+        <div className="stagger-1">
+          <div className="space-y-8">
+            {/* 경고 */}
+              {status === "ready" && (
+                <div className="space-y-4">
+                  <div
+                    className="rounded-none animate-fade-in-up"
+                    style={{
+                      backgroundColor: "#f6f6f6",
+                      padding: "20px 24px",
+                      borderLeft: "4px solid #000000",
+                      borderTop: "1.5px solid #000000",
+                      borderRight: "1.5px solid #000000",
+                      borderBottom: "1.5px solid #000000",
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-[18px]">⚠️</span>
+                      <p className="text-[16px] font-bold" style={{ color: "#000000" }}>
+                        {readyGuideTitle}
+                      </p>
+                    </div>
+                    <ul className="space-y-2.5 text-[15px]" style={{ color: "#333333" }}>
+                      {(isPartialRemove ? [
+                        "선택한 기능에 해당하는 항목만 제거합니다",
+                        "다른 기능이 남아 있으면 공통 복구 경로는 유지됩니다",
+                        "REKOIT 디렉토리 안의 해당 기능 관련 파일도 함께 정리됩니다"
+                      ] : [
+                        "설치된 항목을 자동 감지하여 해당 항목만 복구합니다",
+                        "양쪽 파티션(현재 + 비활성) 모두 정리됩니다",
+                        "펌웨어 업데이트 보호 장치도 함께 제거됩니다",
+                        "한글 폰트도 함께 삭제됩니다"
+                      ]).map((text, i) => (
+                        <li key={i} className="flex items-start gap-3">
+                          <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                          <span className="font-medium">{text}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
 
-        {/* 진행 */}
-        {status !== "ready" && (
-          <div className="space-y-4 animate-fade-in-up stagger-1">
-            <ProgressBar
-              progress={progress}
-              status={status === "error" ? "error" : status === "complete" ? "complete" : "active"}
-              currentStep={currentStep}
-            />
-            <TerminalOutput lines={logs} maxHeight="280px" />
-          </div>
-        )}
+              {/* 진행 */}
+              {status !== "ready" && (
+                <div className="space-y-8 py-4 animate-fade-in">
+                  <div className="text-center space-y-2">
+                    <div className="flex items-center justify-center gap-1.5 text-[22px] font-bold text-black">
+                      <span>{currentStep || (status === "complete" ? "제거 완료" : "준비 중")}</span>
+                      {status === "uninstalling" && (
+                        <span className="flex gap-1 ml-1">
+                          <span className="animate-bounce" style={{ animationDelay: "0ms" }}>.</span>
+                          <span className="animate-bounce" style={{ animationDelay: "150ms" }}>.</span>
+                          <span className="animate-bounce" style={{ animationDelay: "300ms" }}>.</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[15px] font-medium opacity-50">
+                      {status === "uninstalling" ? "기기를 원본 상태로 되돌리고 있습니다." : 
+                       status === "complete" ? "모든 과정이 성공적으로 끝났습니다." : "오류가 발생했습니다."}
+                    </p>
+                  </div>
+                  <div className="w-full">
+                    <ProgressBar
+                      progress={progress}
+                      status={status === "error" ? "error" : status === "complete" ? "complete" : "active"}
+                    />
+                  </div>
+                  <div className="pt-4 border-t border-black/5">
+                    <TerminalOutput
+                      lines={logs}
+                      maxHeight="240px"
+                      title="Uninstall Log"
+                      showDownload={status === "complete" || status === "error"}
+                      onDownload={() => {
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+                        const content = `=== REKOIT 제거 로그 ===\n기기: ${state.deviceModel}\nIP: ${state.ip}\n상태: ${status}\n\n${logs.join("\n")}`;
+                        const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `rekoit-uninstall-${timestamp}.txt`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
 
-        {/* 완료 */}
-        {status === "complete" && (
-          <div
-            className="p-6 rounded-xl animate-fade-in"
-            style={{ backgroundColor: "var(--success-light)", color: "var(--success)" }}
-          >
-            <p className="text-[20px] font-medium text-center">{completeMessage}</p>
-            {!isPartialRemove && detected && (
-              <div className="mt-3 text-[14px] text-center" style={{ color: "var(--text-muted)" }}>
-                {detected.hangul && detected.bt
-                  ? "한글 입력과 블루투스 설치가 모두 정리됨"
-                  : detected.hangul
-                  ? "한글 입력 구성이 정리됨"
-                  : detected.bt
-                  ? "블루투스 설치가 정리됨"
-                  : "설치된 항목 없음"}
-              </div>
-            )}
-          </div>
-        )}
+              {/* 완료 */}
+              {status === "complete" && (
+                <div
+                  className="p-8 bg-[#e6f4ea] border border-[#1e8e3e] animate-scale-in"
+                >
+                  <p className="text-[20px] font-bold text-center" style={{ color: "#1e8e3e" }}>{completeMessage}</p>
+                  {!isPartialRemove && detected && (
+                    <div className="mt-2 text-[15px] text-center font-medium opacity-60">
+                      {detected.hangul && detected.bt
+                        ? "한글 입력 엔진과 블루투스 도우미 설치가 모두 정리됨"
+                        : detected.hangul
+                        ? "한글 입력 엔진 구성이 정리됨"
+                        : detected.bt
+                        ? "블루투스 도우미 설치가 정리됨"
+                        : "설치된 항목 없음"}
+                    </div>
+                  )}
+                </div>
+              )}
 
-        {status === "complete" && errors.length > 0 && (
-          <ErrorReport errors={errors} allLogs={logs} context={errorContext} />
-        )}
+              {status === "complete" && errors.length > 0 && (
+                <ErrorReport errors={errors} allLogs={logs} context={errorContext} />
+              )}
 
-        {/* 에러 */}
-        {status === "error" && (
-          <div className="space-y-4">
-            <div
-              className="p-6 rounded-xl animate-fade-in"
-              style={{ backgroundColor: "var(--error-light)", color: "var(--error)" }}
-            >
-              <p className="text-[17px] font-medium">오류가 발생했습니다.</p>
-            </div>
-            <ErrorReport errors={errors} allLogs={logs} context={errorContext} />
-            <Button variant="secondary" onClick={startUninstall}>
-              재시도
-            </Button>
+              {/* 에러 */}
+              {status === "error" && (
+                <div className="space-y-4">
+                  <div
+                    className="p-6 bg-[#fce8e6] border border-[#d93025] animate-fade-in"
+                  >
+                    <p className="text-[17px] font-bold" style={{ color: "#d93025" }}>오류가 발생했습니다.</p>
+                  </div>
+                  <ErrorReport errors={errors} allLogs={logs} context={errorContext} />
+                  <Button variant="primary" onClick={startUninstall} className="font-bold">
+                    재시도
+                  </Button>
+                </div>
+              )}
           </div>
-        )}
+        </div>
 
         {/* 네비게이션 */}
-        <div className="flex justify-end pt-4">
+        <div className="flex justify-between pt-8 stagger-2">
+          <Button variant="ghost" onClick={() => router.push(returnPath)} disabled={status === "uninstalling"} icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>}>
+            작업 선택으로
+          </Button>
           {status === "ready" ? (
-            <Button onClick={startUninstall} size="lg">
+            <Button onClick={startUninstall} size="lg" className="px-16 font-bold">
               {startLabel}
             </Button>
           ) : status === "complete" ? (
-            <Button onClick={() => router.push(returnPath)} size="lg">
+            <Button onClick={() => router.push(returnPath)} size="lg" className="px-16 font-bold" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>}>
               작업 선택으로
             </Button>
           ) : null}

@@ -1,85 +1,54 @@
 import { NextResponse } from "next/server";
-import { exec, spawn } from "child_process";
-import { promisify } from "util";
-import os from "os";
-import fs from "fs";
+import { spawn } from "child_process";
 
-const execAsync = promisify(exec);
+import {
+  buildBulkInstallCommand,
+  buildSingleToolInstallCommand,
+  detectPackageManager,
+  getHostPlatform,
+  getPackageManagerActionLabel,
+  getPackageManagerBootstrapHint,
+  getToolStatuses,
+} from "@/lib/prerequisites";
 
-// brew 설치 경로 (Apple Silicon / Intel)
-const BREW_PATHS = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
+async function getSnapshot() {
+  const platform = getHostPlatform();
+  const packageManager = await detectPackageManager();
+  const tools = await getToolStatuses();
+  const missingTools = tools.filter((tool) => !tool.installed);
+  const allReady = missingTools.length === 0;
 
-// brew 설치 도구들이 위치하는 추가 경로
-const EXTRA_BIN_DIRS = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/local/go/bin"];
-
-interface ToolStatus {
-  name: string;
-  command: string;
-  installed: boolean;
-}
-
-function isMac(): boolean {
-  return os.platform() === "darwin";
-}
-
-function getExtendedPath(): string {
-  return `${process.env.PATH}:${EXTRA_BIN_DIRS.join(":")}`;
-}
-
-async function findBrewPath(): Promise<string | null> {
-  for (const p of BREW_PATHS) {
-    if (fs.existsSync(p)) return p;
-  }
-  try {
-    const { stdout } = await execAsync("which brew", {
-      env: { ...process.env, PATH: getExtendedPath() },
-    });
-    return stdout.trim();
-  } catch {
-    return null;
-  }
-}
-
-async function isToolInstalled(command: string): Promise<boolean> {
-  try {
-    await execAsync(`which ${command}`, {
-      env: { ...process.env, PATH: getExtendedPath() },
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return {
+    tools,
+    allReady,
+    platform,
+    packageManager: {
+      label: packageManager.label,
+      installed: packageManager.installed,
+      canAutoInstall: packageManager.canAutoInstall,
+      hint: allReady && !packageManager.installed
+        ? "필수 도구가 이미 준비되어 있습니다."
+        : packageManager.autoInstallHint,
+      actionLabel: packageManager.installed ? null : getPackageManagerActionLabel(platform),
+      bootstrapHint: getPackageManagerBootstrapHint(platform),
+    },
+    manualInstallCommand:
+      missingTools.length > 0 && packageManager.id
+        ? buildBulkInstallCommand(
+            packageManager.id,
+            missingTools.map((tool) => tool.command),
+            true,
+          )
+        : "",
+  };
 }
 
 // GET: 상태 확인 (폴링용, 빠르게 반환)
 export async function GET(): Promise<NextResponse> {
-  const brewPath = await findBrewPath();
-  const brewMissing = isMac() && !brewPath;
-
-  const toolDefs = [
-    { name: "ssh", command: "ssh" },
-    { name: "scp", command: "scp" },
-    { name: "sshpass", command: "sshpass" },
-    { name: "zstd (키보드 추출용)", command: "zstd" },
-    { name: "go (크로스 컴파일용)", command: "go" },
-    { name: "zig (C 크로스 컴파일용)", command: "zig" },
-  ];
-
-  const tools: ToolStatus[] = [];
-  for (const def of toolDefs) {
-    tools.push({
-      name: def.name,
-      command: def.command,
-      installed: await isToolInstalled(def.command),
-    });
-  }
-
-  const allReady = !brewMissing && tools.every((t) => t.installed);
-
-  return NextResponse.json({ tools, allReady, brewMissing });
+  return NextResponse.json(await getSnapshot());
 }
 
-// POST: 자동 설치 액션
+// POST: 보조 액션
 export async function POST(request: Request): Promise<NextResponse> {
   let body: { action?: string };
   try {
@@ -90,9 +59,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const { action } = body;
 
-  // Homebrew 설치: Terminal.app에서 자동 실행
   if (action === "open-brew-install") {
-    if (!isMac()) {
+    const platform = getHostPlatform();
+    if (platform.id !== "macos") {
       return NextResponse.json({ error: "macOS에서만 지원" }, { status: 400 });
     }
     try {
@@ -120,36 +89,47 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
-  // 도구 자동 설치 (brew 사용)
   if (action === "install-tools") {
-    const brewPath = await findBrewPath();
-    if (!brewPath) {
+    const packageManager = await detectPackageManager();
+    if (!packageManager.id || !packageManager.installed) {
       return NextResponse.json(
-        { error: "Homebrew가 설치되어 있지 않습니다" },
+        { error: "자동 설치용 패키지 매니저를 찾지 못했습니다" },
+        { status: 400 },
+      );
+    }
+    if (!packageManager.canAutoInstall) {
+      return NextResponse.json(
+        { error: "관리자 권한이 필요해 브라우저에서 자동 설치할 수 없습니다" },
         { status: 400 },
       );
     }
 
-    const extEnv = { ...process.env, PATH: getExtendedPath() };
+    const tools = await getToolStatuses();
     const results: Record<string, boolean> = {};
-
-    const installMap: [string, string][] = [
-      ["sshpass", `${brewPath} install hudochenkov/sshpass/sshpass`],
-      ["zstd", `${brewPath} install zstd`],
-      ["go", `${brewPath} install go`],
-      ["zig", `${brewPath} install zig`],
-    ];
-
-    for (const [tool, command] of installMap) {
-      if (await isToolInstalled(tool)) {
-        results[tool] = true;
+    for (const tool of tools) {
+      if (tool.installed) {
+        results[tool.command] = true;
         continue;
       }
+
+      const command = buildSingleToolInstallCommand(packageManager.id, tool.command, false);
+      if (!command) {
+        results[tool.command] = false;
+        continue;
+      }
+
       try {
-        await execAsync(command, { timeout: 300000, env: extEnv });
-        results[tool] = await isToolInstalled(tool);
+        const { exec } = await import("child_process");
+        const { promisify } = await import("util");
+        const execAsync = promisify(exec);
+        await execAsync(command, {
+          timeout: 300000,
+          env: { ...process.env, PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin` },
+        });
+        const refreshed = await getToolStatuses();
+        results[tool.command] = refreshed.find((entry) => entry.command === tool.command)?.installed === true;
       } catch {
-        results[tool] = false;
+        results[tool.command] = false;
       }
     }
 

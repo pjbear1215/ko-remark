@@ -52,10 +52,12 @@ export function classifyPairingFailure(line, { passkeySent = false } = {}) {
 
 export function buildBluetoothCleanupScript() {
   return `
+# Ensure no background bluetoothctl is running
 bluetoothctl scan off 2>/dev/null || true
 bluetoothctl pairable off 2>/dev/null || true
 bluetoothctl agent off 2>/dev/null || true
-killall bluetoothctl 2>/dev/null || true
+killall -9 bluetoothctl 2>/dev/null || true
+sleep 0.5
 `;
 }
 
@@ -69,59 +71,48 @@ rm -rf /var/lib/bluetooth/*/${escapedAddress} 2>/dev/null || true
 `;
 }
 
-export function buildBluetoothPairSessionScript({ address, name }) {
+export function buildBluetoothPairSessionScript({ address, name, scanTimeout = 15 }) {
   const escapedAddress = address.replace(/"/g, '\\"');
   const escapedName = (name ?? "").replace(/"/g, '\\"');
 
   return `
-ADDR="${escapedAddress}"
+# Use lowercase for consistency as BlueZ scan usually returns lowercase
+ADDR=$(echo "${escapedAddress}" | tr '[:upper:]' '[:lower:]')
 DEVICE_NAME="${escapedName}"
 
-${buildStaleDeviceRemovalScript({ address, name })}
+log() { echo "LOG|$1"; }
+
+log "--- 페어링 절차 시작 (대상: $DEVICE_NAME / $ADDR) ---"
+
+# 1. STOP INTERFERING SERVICES
+log "백그라운드 서비스 및 기존 세션 정리..."
+systemctl stop rekoit-bt-wake-reconnect.service 2>/dev/null || true
+killall -9 bluetoothctl 2>/dev/null || true
+# Create sentinel to block background reconnection monitor
+touch /tmp/rekoit-setup-active
+sleep 0.5
+
+# 2. CLEAN UP OLD INFO
+log "기존 기기 정보 캐시 삭제 중..."
+bluetoothctl disconnect "$ADDR" 2>/dev/null || true
+bluetoothctl untrust "$ADDR" 2>/dev/null || true
+bluetoothctl remove "$ADDR" 2>/dev/null || true
+rm -rf /var/lib/bluetooth/*/"$ADDR" 2>/dev/null || true
 
 if [ -n "$DEVICE_NAME" ]; then
   bluetoothctl devices 2>/dev/null | while read -r _ STALE_ADDR STALE_NAME; do
     [ -n "$STALE_ADDR" ] || continue
     [ "$STALE_NAME" = "$DEVICE_NAME" ] || continue
+    log "중복된 이름의 기기 정리: $STALE_ADDR"
     bluetoothctl disconnect "$STALE_ADDR" 2>/dev/null || true
     bluetoothctl untrust "$STALE_ADDR" 2>/dev/null || true
     bluetoothctl remove "$STALE_ADDR" 2>/dev/null || true
     rm -rf /var/lib/bluetooth/*/"$STALE_ADDR" 2>/dev/null || true
   done
 fi
+sleep 1
 
-echo "SCANNING..."
-bluetoothctl power on 2>/dev/null || true
-bluetoothctl pairable on 2>/dev/null || true
-INFO=$(bluetoothctl info "$ADDR" 2>&1)
-FOUND=0
-case "$INFO" in
-  *Name:*|*RSSI:*)
-    FOUND=1
-    ;;
-esac
-if [ "$FOUND" -eq 0 ]; then
-  SCAN_OUT=$(bluetoothctl --timeout 6 scan on 2>&1)
-  echo "$SCAN_OUT"
-  OBSERVED_ADDRS=$(printf '%s\n' "$SCAN_OUT" | awk '/Device [0-9A-F:]+/ {print $3}' | sort -u)
-  if [ -n "$DEVICE_NAME" ] && [ -n "$OBSERVED_ADDRS" ]; then
-    for CANDIDATE_ADDR in $OBSERVED_ADDRS; do
-      CANDIDATE_INFO=$(bluetoothctl info "$CANDIDATE_ADDR" 2>&1)
-      CANDIDATE_NAME=$(printf '%s\n' "$CANDIDATE_INFO" | sed -n 's/^[[:space:]]*Name: //p' | head -n 1)
-      CANDIDATE_ALIAS=$(printf '%s\n' "$CANDIDATE_INFO" | sed -n 's/^[[:space:]]*Alias: //p' | head -n 1)
-      if [ "$CANDIDATE_NAME" = "$DEVICE_NAME" ] || [ "$CANDIDATE_ALIAS" = "$DEVICE_NAME" ]; then
-        ADDR="$CANDIDATE_ADDR"
-        FOUND=1
-        break
-      fi
-    done
-  fi
-fi
-if [ "$FOUND" -eq 0 ]; then
-  echo "DEVICE_NOT_FOUND: $ADDR"
-  exit 1
-fi
-
+# 3. INTERACTIVE SESSION SETUP
 IN_FIFO="/tmp/bluetoothctl-in.$$"
 OUT_LOG="/tmp/bluetoothctl-out.$$"
 rm -f "$IN_FIFO" "$OUT_LOG"
@@ -132,15 +123,32 @@ exec 3<>"$IN_FIFO"
 cleanup() {
   exec 3>&- 2>/dev/null || true
   kill "$TAIL_PID" 2>/dev/null || true
+  kill "$AUTO_YES_PID" 2>/dev/null || true
   kill "$BT_PID" 2>/dev/null || true
-  rm -f "$IN_FIFO" "$OUT_LOG"
+  rm -f "$IN_FIFO" "$OUT_LOG" /tmp/rekoit-setup-active
+  log "백그라운드 서비스 복구 중..."
+  systemctl start rekoit-bt-wake-reconnect.service 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
+log "인터랙티브 블루투스 에이전트 구동..."
 bluetoothctl < "$IN_FIFO" > "$OUT_LOG" 2>&1 &
 BT_PID=$!
 tail -n +1 -f "$OUT_LOG" &
 TAIL_PID=$!
+
+# Auto-confirm helper for yes/no prompts
+(
+  tail -f "$OUT_LOG" | while read -r LINE; do
+    case "$LINE" in
+      *"[yes/no]"*|*"Confirm passkey"*|*"Accept pairing"*|*"Authorize service"*)
+        printf 'yes\\n' >&3
+        echo "LOG|AUTO_CONFIRM: Sent 'yes' to prompt"
+        ;;
+    esac
+  done
+) &
+AUTO_YES_PID=$!
 
 send_cmd() {
   printf '%s\\n' "$1" >&3
@@ -148,27 +156,35 @@ send_cmd() {
 }
 
 echo "INTERACTIVE_START"
-sleep 0.2
-send_cmd "pairable on"
-sleep 0.2
-send_cmd "agent off"
-sleep 0.2
-send_cmd "agent KeyboardDisplay"
+sleep 0.5
+send_cmd "agent KeyboardOnly"
 sleep 0.2
 send_cmd "default-agent"
 sleep 0.2
-send_cmd "disconnect $ADDR"
+send_cmd "power on"
 sleep 0.2
-send_cmd "untrust $ADDR"
-sleep 0.3
+send_cmd "pairable on"
+sleep 0.5
+
+log "기기 검색 및 페어링 요청 전송..."
+# Start scan to find the BLE device, then pair immediately
+send_cmd "scan on"
+sleep 2
 send_cmd "pair $ADDR"
 
 PAIRED=0
 COUNT=0
-while [ $COUNT -lt 30 ]; do
+log "페어링 응답 대기 중 (최대 60초)..."
+while [ $COUNT -lt 60 ]; do
   COUNT=$((COUNT + 1))
   sleep 1
   INFO=$(bluetoothctl info "$ADDR" 2>&1)
+  
+  # Status log for debugging
+  IS_CONNECTED=$(echo "$INFO" | grep -q "Connected: yes" && echo "YES" || echo "NO")
+  IS_PAIRED=$(echo "$INFO" | grep -q "Paired: yes" && echo "YES" || echo "NO")
+  echo "DEBUG_STATE [$COUNT/60]: Connected=$IS_CONNECTED, Paired=$IS_PAIRED"
+
   case "$INFO" in
     *"Paired: yes"*)
       PAIRED=1
@@ -178,37 +194,42 @@ while [ $COUNT -lt 30 ]; do
 done
 
 if [ "$PAIRED" -eq 1 ]; then
+  log "페어링 성공! 기기 신뢰 및 연결 설정 중..."
+  send_cmd "scan off"
+  sleep 0.2
   send_cmd "trust $ADDR"
-  sleep 1.5
+  sleep 1
   send_cmd "connect $ADDR"
+  
   READY=0
   COUNT=0
   while [ $COUNT -lt 15 ]; do
     COUNT=$((COUNT + 1))
     sleep 1
     INFO=$(bluetoothctl info "$ADDR" 2>&1)
-    case "$INFO" in
-      *"Paired: yes"*"Trusted: yes"*"Connected: yes"*|*"Paired: yes"*"Connected: yes"*"Trusted: yes"*|*"Trusted: yes"*"Paired: yes"*"Connected: yes"*|*"Trusted: yes"*"Connected: yes"*"Paired: yes"*|*"Connected: yes"*"Paired: yes"*"Trusted: yes"*|*"Connected: yes"*"Trusted: yes"*"Paired: yes"*)
-        READY=1
-        break
-        ;;
-    esac
+    if echo "$INFO" | grep -q "Connected: yes"; then
+      READY=1
+      break
+    fi
   done
+  
   if [ "$READY" -eq 1 ]; then
     echo "PAIRED_ADDR:$ADDR"
     echo "PAIR_SUCCESS"
   else
+    log "경고: 페어링은 성공했으나 연결이 불안정합니다."
     echo "PAIRED_ADDR:$ADDR"
     echo "PAIR_PARTIAL"
   fi
 else
+  log "오류: 페어링 요청이 기기에 의해 거절되었거나 패스키 입력이 누락되었습니다."
   echo "PAIR_FAILED"
 fi
 
 send_cmd "quit"
 wait "$BT_PID"
 BT_STATUS=$?
-echo "PAIR_PROC_CLOSED: $BT_STATUS"
+log "세션 종료 (Status: $BT_STATUS)"
 `;
 }
 

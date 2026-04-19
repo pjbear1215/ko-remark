@@ -1,5 +1,5 @@
 #!/bin/sh
-# rekoit-restore: re-apply ReKoIt runtime after firmware update / reboot
+# rekoit-restore: re-apply REKOIT runtime after firmware update / reboot
 # /home/root/rekoit/ survives firmware updates; system dirs do not
 
 set -e

@@ -27,17 +27,15 @@ test("isKeyboardBluetoothInfo ignores non-keyboard devices", () => {
   );
 });
 
-test("buildBluetoothKeyboardCleanupScript removes paired keyboard records and restarts bluetooth", () => {
+test("buildBluetoothKeyboardCleanupScript removes paired keyboard records without restarting bluetooth", () => {
   const script = buildBluetoothKeyboardCleanupScript();
 
-  assert.match(script, /bluetoothctl devices Paired/);
-  assert.match(script, /bluetoothctl devices Trusted/);
-  assert.match(script, /bluetoothctl devices Connected/);
+  assert.match(script, /find \/var\/lib\/bluetooth/);
   assert.match(script, /disconnect "\$ADDR"/);
   assert.match(script, /untrust "\$ADDR"/);
   assert.match(script, /remove "\$ADDR"/);
   assert.match(script, /\/var\/lib\/bluetooth/);
   assert.match(script, /cache\/\$ADDR/);
-  assert.match(script, /systemctl restart bluetooth/);
+  assert.doesNotMatch(script, /systemctl restart bluetooth/);
   assert.match(script, /BT_KEYBOARD_REMOVED_COUNT=/);
 });

@@ -9,23 +9,21 @@ interface StepIndicatorProps {
 
 export default function StepIndicator({ currentStep }: StepIndicatorProps) {
   return (
-    <div className="flex items-center justify-between mb-14 px-2 relative">
-      {/* 연결선 배경 (전체, 미래 구간 점선) */}
+    <div className="flex items-center justify-between mb-6 px-2 relative">
+      {/* 연결선 배경 (전체) */}
       <div
-        className="absolute top-[10px] left-0 right-0 h-[2px]"
+        className="absolute top-[10px] left-0 right-0 h-[1.5px]"
         style={{
-          backgroundImage:
-            "repeating-linear-gradient(90deg, var(--border-light) 0px, var(--border-light) 4px, transparent 4px, transparent 8px)",
-          opacity: 0.55,
+          backgroundColor: "#e0e0e0",
         }}
       />
-      {/* 연결선 진행 (완료 구간 실선) */}
+      {/* 연결선 진행 (완료 구간) */}
       <div
-        className="absolute top-[10px] left-0 h-[2px]"
+        className="absolute top-[10px] left-0 h-[1.5px]"
         style={{
           width: `${(Math.min(currentStep, steps.length - 1) / (steps.length - 1)) * 100}%`,
-          background: "linear-gradient(90deg, rgba(10,132,255,0.75), rgba(10,132,255,0.35))",
-          transition: "width var(--transition-base)",
+          backgroundColor: "#000000",
+          transition: "width 0.4s ease-out",
         }}
       />
       {steps.map((label, i) => (
@@ -35,18 +33,18 @@ export default function StepIndicator({ currentStep }: StepIndicatorProps) {
         >
           {/* 도트 */}
           {i < currentStep ? (
-            // 완료 단계: 체크마크 원형
+            // 완료 단계: 검정색 원 + 흰색 체크
             <div
               className="relative z-10"
               style={{
                 width: "18px",
                 height: "18px",
                 borderRadius: "50%",
-                backgroundColor: "var(--apple-blue)",
+                backgroundColor: "#000000",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                transition: "all var(--transition-spring)",
+                transition: "all 0.3s ease",
               }}
             >
               <svg
@@ -55,7 +53,7 @@ export default function StepIndicator({ currentStep }: StepIndicatorProps) {
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="white"
-                strokeWidth="3"
+                strokeWidth="3.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
@@ -63,45 +61,37 @@ export default function StepIndicator({ currentStep }: StepIndicatorProps) {
               </svg>
             </div>
           ) : i === currentStep ? (
-            // 현재 단계: 큰 링 + 펄스 애니메이션
+            // 현재 단계: 검정색 테두리 원
             <div
               className="relative z-10"
               style={{
                 width: "18px",
                 height: "18px",
                 borderRadius: "50%",
-                backgroundColor: "var(--apple-blue)",
-                animation: "ringPulse 2s ease-in-out infinite",
-                transition: "all var(--transition-spring)",
+                backgroundColor: "#ffffff",
+                border: "2.5px solid #000000",
+                transition: "all 0.3s ease",
               }}
             />
           ) : (
-            // 미래 단계: 점선 테두리 원형
+            // 미래 단계: 옅은 회색 작은 원
             <div
               className="relative z-10"
               style={{
                 width: "14px",
                 height: "14px",
                 borderRadius: "50%",
-                border: "1.5px dashed rgba(126, 120, 111, 0.5)",
-                backgroundColor: "transparent",
-                transition: "all var(--transition-spring)",
+                backgroundColor: "#e0e0e0",
+                transition: "all 0.3s ease",
               }}
             />
           )}
           {/* 라벨 */}
           <span
-            className="text-[13px] mt-2 whitespace-nowrap"
+            className="text-[12px] mt-2.5 font-bold uppercase tracking-widest"
             style={{
-              color:
-                i === currentStep
-                  ? "var(--text-primary)"
-                  : i < currentStep
-                    ? "var(--text-secondary)"
-                    : "rgba(126, 120, 111, 0.72)",
-              fontWeight:
-                i === currentStep ? 600 : i < currentStep ? 500 : 400,
-              transition: "color var(--transition-base)",
+              color: i === currentStep ? "#000000" : i < currentStep ? "#666666" : "#bbbbbb",
+              transition: "color 0.3s ease",
             }}
           >
             {label}

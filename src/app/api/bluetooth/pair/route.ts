@@ -56,9 +56,11 @@ fi
   });
 }
 
-function persistBluetoothDeviceAddress(
+function persistBluetoothDeviceDetails(
   session: { ip: string; password: string },
   address: string,
+  name: string,
+  irk: string = "",
 ): Promise<void> {
   if (!/^[0-9A-Fa-f:]+$/.test(address)) {
     return Promise.resolve();
@@ -90,12 +92,16 @@ INSTALL_BT=0
 BLUETOOTH_POWER_ON=0
 SWAP_LEFT_CTRL_CAPSLOCK=0
 BT_DEVICE_ADDRESS=""
+BT_DEVICE_NAME=""
+BT_DEVICE_IRK=""
 KEYBOARD_LOCALES=""
 if [ -f "$STATE_FILE" ]; then
   . "$STATE_FILE"
 fi
-BT_DEVICE_ADDRESS=${address}
-printf 'INSTALL_HANGUL=%s\nINSTALL_BT=%s\nBLUETOOTH_POWER_ON=%s\nSWAP_LEFT_CTRL_CAPSLOCK=%s\nBT_DEVICE_ADDRESS=%s\nKEYBOARD_LOCALES=%s\n' "\${INSTALL_HANGUL:-0}" "\${INSTALL_BT:-0}" "\${BLUETOOTH_POWER_ON:-0}" "\${SWAP_LEFT_CTRL_CAPSLOCK:-0}" "$BT_DEVICE_ADDRESS" "\${KEYBOARD_LOCALES:-}" > "$STATE_FILE"
+BT_DEVICE_ADDRESS="${address}"
+BT_DEVICE_NAME="${name.replace(/"/g, '\\"')}"
+BT_DEVICE_IRK="${irk}"
+printf 'INSTALL_HANGUL=%s\nINSTALL_BT=%s\nBLUETOOTH_POWER_ON=%s\nSWAP_LEFT_CTRL_CAPSLOCK=%s\nBT_DEVICE_ADDRESS="%s"\nBT_DEVICE_NAME="%s"\nBT_DEVICE_IRK="%s"\nKEYBOARD_LOCALES="%s"\n' "\${INSTALL_HANGUL:-0}" "\${INSTALL_BT:-0}" "\${BLUETOOTH_POWER_ON:-0}" "\${SWAP_LEFT_CTRL_CAPSLOCK:-0}" "$BT_DEVICE_ADDRESS" "$BT_DEVICE_NAME" "$BT_DEVICE_IRK" "\${KEYBOARD_LOCALES:-}" > "$STATE_FILE"
         `,
       ],
       { env },
@@ -105,10 +111,58 @@ printf 'INSTALL_HANGUL=%s\nINSTALL_BT=%s\nBLUETOOTH_POWER_ON=%s\nSWAP_LEFT_CTRL_
   });
 }
 
+function extractBluetoothIrk(
+  session: { ip: string; password: string },
+  address: string,
+): Promise<string> {
+  return new Promise(async (resolve) => {
+    const env = {
+      ...process.env,
+      SSHPASS: session.password,
+      PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin`,
+    };
+
+    // Try multiple times as BlueZ might be slow writing to disk
+    for (let i = 0; i < 5; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, 1000));
+
+      const proc = spawn(
+        "sshpass",
+        [
+          "-e",
+          "ssh",
+          "-o", "StrictHostKeyChecking=no",
+          "-o", "UserKnownHostsFile=/dev/null",
+          "-o", "ConnectTimeout=10",
+          `root@${session.ip}`,
+          `cat /var/lib/bluetooth/*/${address}/info 2>/dev/null | grep -A1 '\\[IdentityResolvingKey\\]' | grep 'Key=' | cut -d= -f2 | head -n 1`,
+        ],
+        { env },
+      );
+      
+      let output = "";
+      await new Promise<void>((res) => {
+        proc.stdout.on("data", (data: Buffer) => { output += data.toString(); });
+        proc.on("close", () => res());
+        proc.on("error", () => res());
+      });
+
+      const key = output.trim();
+      if (key) {
+        resolve(key);
+        return;
+      }
+    }
+    resolve("");
+  });
+}
+
 export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = request.nextUrl;
   const address = searchParams.get("address") ?? "";
-  const name = searchParams.get("name") ?? "";
+  const name = (searchParams.get("name") ?? "").replace(/[^a-zA-Z0-9\s-]/g, "");
+  const timeoutParam = searchParams.get("timeout");
+  const scanTimeout = timeoutParam ? parseInt(timeoutParam, 10) : 15;
   const session = getSshSessionFromRequest(request);
 
   if (!session || !address) {
@@ -140,103 +194,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
         const env = { ...process.env, SSHPASS: session.password, PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin` };
 
-        const readInfoStatus = async (candidateAddress: string) => {
-          const infoProc = spawn(
-            "sshpass",
-            [
-              "-e",
-              "ssh",
-              "-o",
-              "StrictHostKeyChecking=no",
-              "-o",
-              "UserKnownHostsFile=/dev/null",
-              "-o",
-              "ConnectTimeout=20",
-              `root@${session.ip}`,
-              `bluetoothctl info ${candidateAddress} 2>/dev/null || true`,
-            ],
-            { env },
-          );
-          let infoOutput = "";
-          await new Promise<void>((resolve) => {
-            infoProc.stdout.on("data", (data: Buffer) => {
-              infoOutput += data.toString();
-            });
-            infoProc.on("close", () => resolve());
-            infoProc.on("error", () => resolve());
-          });
-          return parseBluetoothInfoStatus(infoOutput);
-        };
+        // [MODIFIED] Force fresh pairing session even if device seems paired.
+        // This ensures the user can re-pair when switching channels or fixing connection issues.
+        let resolvedAddress = address;
 
-        let preflightStatus = await readInfoStatus(address);
-        let readyAddress = isBluetoothReadyStatus(preflightStatus) ? address : "";
-
-        if (!readyAddress && name) {
-          const devicesProc = spawn(
-            "sshpass",
-            [
-              "-e",
-              "ssh",
-              "-o",
-              "StrictHostKeyChecking=no",
-              "-o",
-              "UserKnownHostsFile=/dev/null",
-              "-o",
-              "ConnectTimeout=20",
-              `root@${session.ip}`,
-              "bluetoothctl devices || true",
-            ],
-            { env },
-          );
-          let devicesOutput = "";
-          await new Promise<void>((resolve) => {
-            devicesProc.stdout.on("data", (data: Buffer) => {
-              devicesOutput += data.toString();
-            });
-            devicesProc.on("close", () => resolve());
-            devicesProc.on("error", () => resolve());
-          });
-
-          const latestAddress = extractLatestMatchingDeviceAddress(devicesOutput, name);
-          if (latestAddress && latestAddress !== address) {
-            preflightStatus = await readInfoStatus(latestAddress);
-            if (isBluetoothReadyStatus(preflightStatus)) {
-              readyAddress = latestAddress;
-            }
-          }
-        }
-
-        if (readyAddress) {
-          const connectProc = spawn(
-            "sshpass",
-            [
-              "-e",
-              "ssh",
-              "-o",
-              "StrictHostKeyChecking=no",
-              "-o",
-              "UserKnownHostsFile=/dev/null",
-              "-o",
-              "ConnectTimeout=20",
-              `root@${session.ip}`,
-              `bluetoothctl connect ${readyAddress} 2>/dev/null || true`,
-            ],
-            { env },
-          );
-          await new Promise<void>((resolve) => {
-            connectProc.on("close", () => resolve());
-            connectProc.on("error", () => resolve());
-          });
-
-          await persistBluetoothPowerState(session, "1");
-          await persistBluetoothDeviceAddress(session, readyAddress);
-          send("log", { line: `ALREADY_PAIRED: ${readyAddress}` });
-          send("paired", { success: true, address: readyAddress });
-          send("complete", {});
-          return;
-        }
-
-        const pairScript = buildBluetoothPairSessionScript({ address, name });
+        const pairScript = buildBluetoothPairSessionScript({ address, name, scanTimeout });
         const localScriptPath = path.join(os.tmpdir(), `ko-remark-pair-${Date.now()}.sh`);
         const remoteScriptPath = `/tmp/ko-remark-pair-${Date.now()}.sh`;
         await fs.writeFile(localScriptPath, pairScript, "utf8");
@@ -288,7 +250,6 @@ export async function GET(request: NextRequest): Promise<Response> {
         let pairResultSent = false;
         let pairStarted = false;
         let persistPowerOnAfterProcess = false;
-        let resolvedAddress = address;
 
         const handleChunk = (data: Buffer, source: "stdout" | "stderr"): void => {
           const output = data.toString();
@@ -305,17 +266,52 @@ export async function GET(request: NextRequest): Promise<Response> {
               continue;
             }
 
-            if (!pairResultSent && stripped.includes("DEVICE_NOT_FOUND")) {
-              pairResultSent = true;
-              send("paired", { success: false });
+            // Handle LOG| prefix from shell script
+            if (stripped.startsWith("LOG|")) {
+              const msg = stripped.replace("LOG|", "").trim();
+              send("log", { line: `INFO: ${msg}` });
+              
+              // Map specific logs to user-friendly status messages
+              if (msg.includes("정리")) send("status", { message: "시스템 환경 정리 중..." });
+              if (msg.includes("기존 기기 정보")) send("status", { message: "기존 연결 정보 삭제 중..." });
+              if (msg.includes("인터랙티브 블루투스")) send("status", { message: "페어링 에이전트 실행 중..." });
+              if (msg.includes("기기 검색")) send("status", { message: "기기를 찾는 중입니다..." });
+              if (msg.includes("페어링 응답 대기")) send("status", { message: "키보드 응답을 기다리는 중..." });
+              if (msg.includes("성공")) send("status", { message: "연결 성공! 마무리 중..." });
+              
+              continue;
             }
 
+            // High-level progress logs
             if (stripped.includes("INTERACTIVE_START")) {
-              send("log", { line: "INTERACTIVE_START" });
+              send("log", { line: "--- 인터랙티브 페어링 세션 시작 ---" });
+            } else if (stripped.startsWith("CMD>")) {
+              const cmd = stripped.replace("CMD>", "").trim();
+              send("log", { line: `EXEC: bluetoothctl ${cmd}` });
+              continue;
+            }
+
+            // Enhanced diagnostic logging
+            if (
+              stripped &&
+              !stripped.includes("AUTO_SENT_YES") &&
+              !stripped.startsWith("[NEW] Controller") &&
+              !stripped.startsWith("[CHG] Controller")
+            ) {
+              const displayLine = stripped.startsWith("[") ? `BTCTL: ${stripped}` : `INFO: ${stripped}`;
+              send("log", { line: displayLine });
+            }
+
+            if (!pairResultSent && stripped.includes("DEVICE_NOT_FOUND")) {
+              pairResultSent = true;
+              const msg = `기기(${address})를 찾을 수 없습니다. 키보드가 여전히 페어링 모드인지 확인하세요.`;
+              send("log", { line: `ERROR: ${msg}` });
+              send("paired", { success: false });
             }
 
             if (stripped.includes("Attempting to pair")) {
               pairStarted = true;
+              send("log", { line: "INFO: 페어링 절차 시작..." });
               send("waiting_passkey", {
                 message: "페어링 요청 중...",
               });
@@ -325,6 +321,7 @@ export async function GET(request: NextRequest): Promise<Response> {
               const pairedAddress = stripped.replace("PAIRED_ADDR:", "").trim();
               if (pairedAddress) {
                 resolvedAddress = pairedAddress;
+                send("log", { line: `INFO: 대상 주소 확정 (${resolvedAddress})` });
               }
             }
 
@@ -333,6 +330,7 @@ export async function GET(request: NextRequest): Promise<Response> {
               const displayedPasskey = extractDisplayedPasskey(stripped);
               if (displayedPasskey) {
                 passkeySent = true;
+                send("log", { line: `PASSKEY: ${displayedPasskey} 생성됨` });
                 send("passkey", {
                   passkey: displayedPasskey,
                   message: `키보드에서 ${displayedPasskey} 을 입력하고 Enter를 누르세요`,
@@ -348,23 +346,35 @@ export async function GET(request: NextRequest): Promise<Response> {
               ) {
                 pairResultSent = true;
                 persistPowerOnAfterProcess = true;
-                void persistBluetoothDeviceAddress(session, resolvedAddress);
+                void (async () => {
+                  const irk = await extractBluetoothIrk(session, resolvedAddress);
+                  if (irk) send("log", { line: "INFO: IRK 추출 완료" });
+                  await persistBluetoothDeviceDetails(session, resolvedAddress, name, irk);
+                })();
+                send("log", { line: "SUCCESS: 페어링 및 연결 성공" });
                 send("paired", { success: true, address: resolvedAddress });
+              } else if (stripped.includes("PAIR_PARTIAL")) {
+                send("log", { line: "WARN: 페어링은 되었으나 연결이 불완전합니다. 다시 시도하거나 키보드를 깨워보세요." });
               }
             }
 
-            // 페어링 실패
+            // 페어링 실패 판단 (좀 더 보수적으로 변경)
             if (!pairResultSent && pairStarted) {
               if (
-                stripped.includes("PAIR_PARTIAL") ||
                 stripped.includes("PAIR_FAILED") ||
-                (stripped.includes("Failed to pair") && !stripped.includes("InProgress")) ||
+                (stripped.includes("Failed to pair") && !stripped.includes("InProgress") && !stripped.includes("not found")) ||
                 stripped.includes("Authentication Failed") ||
                 stripped.includes("Authentication Rejected") ||
-                stripped.includes("AuthenticationCanceled") ||
-                stripped.includes("Paired: no")
+                stripped.includes("AuthenticationCanceled")
+                // 'Paired: no'는 제외 (대기 중인 상태일 수 있음)
               ) {
                 pairResultSent = true;
+                let failMsg = "페어링 실패";
+                if (stripped.includes("Authentication Failed")) failMsg = "인증 실패 (패스키 오입력 가능성)";
+                if (stripped.includes("Authentication Rejected")) failMsg = "기기에서 페어링 거절됨";
+                if (stripped.includes("AuthenticationCanceled")) failMsg = "페어링 취소됨";
+                
+                send("log", { line: `ERROR: ${failMsg}` });
                 send("paired", { success: false });
               }
             }
@@ -468,7 +478,7 @@ export async function GET(request: NextRequest): Promise<Response> {
               );
               let latestInfoOutput = "";
               await new Promise<void>((resolve) => {
-                latestInfoProc.stdout.on("data", (data: Buffer) => {
+                latestInfoProc.stdout?.on("data", (data: Buffer) => {
                   latestInfoOutput += data.toString();
                 });
                 latestInfoProc.on("close", () => resolve());
@@ -478,43 +488,9 @@ export async function GET(request: NextRequest): Promise<Response> {
             }
           }
 
-          if (shouldTreatPairingAttemptAsSuccess(finalInfoStatus)) {
-            if (name) {
-              const devicesProc = spawn(
-                "sshpass",
-                [
-                  "-e",
-                  "ssh",
-                  "-o",
-                  "StrictHostKeyChecking=no",
-                  "-o",
-                  "UserKnownHostsFile=/dev/null",
-                  "-o",
-                  "ConnectTimeout=20",
-                  `root@${session.ip}`,
-                  "bluetoothctl devices || true",
-                ],
-                { env },
-              );
-              let devicesOutput = "";
-              await new Promise<void>((resolve) => {
-                devicesProc.stdout.on("data", (data: Buffer) => {
-                  devicesOutput += data.toString();
-                });
-                devicesProc.on("close", () => resolve());
-                devicesProc.on("error", () => resolve());
-              });
-              const latestAddress = extractLatestMatchingDeviceAddress(devicesOutput, name);
-              if (latestAddress) {
-                resolvedAddress = latestAddress;
-              }
-            }
-            await persistBluetoothPowerState(session, "1");
-            await persistBluetoothDeviceAddress(session, resolvedAddress);
-            pairResultSent = true;
-            send("paired", { success: true, address: resolvedAddress });
-          } else {
-            const journalProc = spawn(
+        if (shouldTreatPairingAttemptAsSuccess(finalInfoStatus)) {
+          if (name) {
+            const devicesProc = spawn(
               "sshpass",
               [
                 "-e",
@@ -526,52 +502,30 @@ export async function GET(request: NextRequest): Promise<Response> {
                 "-o",
                 "ConnectTimeout=20",
                 `root@${session.ip}`,
-                `journalctl -u bluetooth --no-pager -n 80 | grep '${address}' || true`,
+                "bluetoothctl devices || true",
               ],
               { env },
             );
-            let journalOutput = "";
+            let devicesOutput = "";
             await new Promise<void>((resolve) => {
-              journalProc.stdout.on("data", (data: Buffer) => {
-                journalOutput += data.toString();
+              devicesProc.stdout.on("data", (data: Buffer) => {
+                devicesOutput += data.toString();
               });
-              journalProc.on("close", () => resolve());
-              journalProc.on("error", () => resolve());
+              devicesProc.on("close", () => resolve());
+              devicesProc.on("error", () => resolve());
             });
-
-            const journalIssue = classifyBluetoothJournalIssue(journalOutput);
-            if (journalIssue === "hog_accept_failed") {
-              send("error", {
-                message: "선택한 프로파일이 입력 프로파일 수락에 실패했습니다. 같은 키보드의 다른 블루투스 프로파일을 시도하세요.",
-              });
+            const latestAddress = extractLatestMatchingDeviceAddress(devicesOutput, name);
+            if (latestAddress) {
+              resolvedAddress = latestAddress;
             }
           }
-        }
-
-        if (persistPowerOnAfterProcess) {
           await persistBluetoothPowerState(session, "1");
-          await persistBluetoothDeviceAddress(session, resolvedAddress);
-        }
-
-        send("complete", {});
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : String(error);
-        send("error", { message: msg });
-      } finally {
-        closed = true;
-        try {
-          const tmpDir = os.tmpdir();
-          const files = await fs.readdir(tmpDir);
-          await Promise.all(
-            files
-              .filter((file) => file.startsWith("ko-remark-pair-") && file.endsWith(".sh"))
-              .map((file) => fs.unlink(path.join(tmpDir, file)).catch(() => {})),
-          );
-        } catch {
-          // ignore local temp cleanup failures
-        }
-        await new Promise<void>((resolve) => {
-          const cleanupProc = spawn(
+          const irk = await extractBluetoothIrk(session, resolvedAddress);
+          await persistBluetoothDeviceDetails(session, resolvedAddress, name, irk);
+          pairResultSent = true;
+          send("paired", { success: true, address: resolvedAddress });
+        } else {
+          const journalProc = spawn(
             "sshpass",
             [
               "-e",
@@ -583,27 +537,78 @@ export async function GET(request: NextRequest): Promise<Response> {
               "-o",
               "ConnectTimeout=20",
               `root@${session.ip}`,
-              buildBluetoothCleanupScript(),
+              `journalctl -u bluetooth --no-pager -n 80 | grep '${address}' || true`,
             ],
-            { env: { ...process.env, SSHPASS: session.password, PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin` } },
+            { env },
           );
-          cleanupProc.on("close", () => resolve());
-          cleanupProc.on("error", () => resolve());
-        });
-        try {
-          controller.close();
-        } catch {
-          // already closed by client disconnect
+          let journalOutput = "";
+          await new Promise<void>((resolve) => {
+            journalProc.stdout.on("data", (data: Buffer) => {
+              journalOutput += data.toString();
+            });
+            journalProc.on("close", () => resolve());
+            journalProc.on("error", () => resolve());
+          });
+
+          const journalIssue = classifyBluetoothJournalIssue(journalOutput);
+          if (journalIssue === "hog_accept_failed") {
+            send("error", {
+              message: "선택한 프로파일이 입력 프로파일 수락에 실패했습니다. 같은 키보드의 다른 블루투스 프로파일을 시도하세요.",
+            });
+          }
         }
       }
-    },
-  });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+      if (persistPowerOnAfterProcess) {
+        await persistBluetoothPowerState(session, "1");
+        // Give BlueZ time to write the info file
+        await new Promise((r) => setTimeout(r, 1000));
+        const irk = await extractBluetoothIrk(session, resolvedAddress);
+        await persistBluetoothDeviceDetails(session, resolvedAddress, name, irk);
+      }
+
+      send("complete", {});
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      send("error", { message: msg });
+    } finally {
+      closed = true;
+      // 페어링 프로세스 종료 시 센티넬 파일 삭제 및 서비스 시작 보장
+      const cleanupCmd = `
+        rm -f /tmp/rekoit-setup-active /tmp/ko-remark-pair-*.sh
+        ${buildBluetoothCleanupScript()}
+        systemctl start rekoit-bt-wake-reconnect.service 2>/dev/null || true
+      `;
+
+      const cleanupProc = spawn(
+        "sshpass",
+        [
+          "-e",
+          "ssh",
+          "-o",
+          "StrictHostKeyChecking=no",
+          "-o",
+          "UserKnownHostsFile=/dev/null",
+          "-o",
+          "ConnectTimeout=20",
+          `root@${session.ip}`,
+          cleanupCmd,
+        ],
+        { env: { ...process.env, SSHPASS: session.password } },
+      );
+      cleanupProc.on("close", () => {
+        try { controller.close(); } catch {}
+      });
+    }
+
+  },
+});
+
+return new Response(stream, {
+  headers: {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  },
+});
 }

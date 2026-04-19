@@ -89,9 +89,8 @@ async function detect(ip: string, password: string): Promise<{ hangul: boolean; 
 async function removeBt(ip: string, password: string, otherStillInstalled: boolean): Promise<string[]> {
   const logs: string[] = [];
 
-  // BT 런타임만 중지
+  // 재연결 보조 서비스만 먼저 중지하고 bluetooth.service는 cleanup 뒤에 내린다.
   await runSsh(ip, password, `
-    systemctl stop bluetooth.service 2>/dev/null || true
     systemctl stop rekoit-bt-agent.service 2>/dev/null || true
     systemctl disable rekoit-bt-agent.service 2>/dev/null || true
     systemctl stop rekoit-bt-wake-reconnect.service 2>/dev/null || true
@@ -100,7 +99,12 @@ async function removeBt(ip: string, password: string, otherStillInstalled: boole
     systemctl disable rekoit-factory-guard.service 2>/dev/null || true
     systemctl daemon-reload
   `);
-  logs.push("OK: bluetooth.service 중지");
+  logs.push("OK: 블루투스 보조 서비스 중지");
+
+  const btCleanupResult = await runSsh(ip, password, buildBluetoothKeyboardCleanupScript());
+  const removedCountMatch = btCleanupResult.match(/BT_KEYBOARD_REMOVED_COUNT=(\d+)/);
+  const removedCount = removedCountMatch ? Number.parseInt(removedCountMatch[1], 10) : 0;
+  logs.push(`OK: 블루투스 키보드 페어링 정리 (${removedCount}개)`);
 
   // BT 전용 흔적만 원복
   const result = await runSsh(ip, password, `
@@ -136,11 +140,6 @@ async function removeBt(ip: string, password: string, otherStillInstalled: boole
     logs.push("OK: 블루투스 런타임 설정 원복");
   }
 
-  const btCleanupResult = await runSsh(ip, password, buildBluetoothKeyboardCleanupScript());
-  const removedCountMatch = btCleanupResult.match(/BT_KEYBOARD_REMOVED_COUNT=(\d+)/);
-  const removedCount = removedCountMatch ? Number.parseInt(removedCountMatch[1], 10) : 0;
-  logs.push(`OK: 블루투스 키보드 페어링 정리 (${removedCount}개)`);
-
   await runSsh(ip, password, `
     rm -rf /home/root/rekoit/bt-pairing 2>/dev/null || true
     rm -f /home/root/rekoit/install-bt.sh
@@ -150,7 +149,7 @@ async function removeBt(ip: string, password: string, otherStillInstalled: boole
     rm -f /home/root/rekoit/rekoit-bt-wake-reconnect.service
     find /home/root/rekoit -type d -empty -delete 2>/dev/null || true
   `);
-  logs.push("OK: ReKoIt 블루투스 관련 파일 정리");
+  logs.push("OK: REKOIT 블루투스 관련 파일 정리");
 
   if (!otherStillInstalled) {
     await runSsh(ip, password, `
@@ -162,7 +161,7 @@ async function removeBt(ip: string, password: string, otherStillInstalled: boole
       rm -f /etc/systemd/system/multi-user.target.wants/rekoit-bt-wake-reconnect.service
       rm -f /etc/swupdate/conf.d/99-rekoit-postupdate
     `);
-    logs.push("OK: BT-only ReKoIt 공통 복구 경로 제거");
+    logs.push("OK: BT-only REKOIT 공통 복구 경로 제거");
   }
 
   // 비활성 파티션 정리
@@ -301,7 +300,7 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
     logs.push("ERROR: rootfs remount 실패 — 제거 불가");
     return logs;
   }
-  logs.push(`OK: 한글 입력 런타임, 폰트, libepaper 정리${otherStillInstalled ? "" : ", ReKoIt guard 제거"}`);
+  logs.push(`OK: 한글 입력 런타임, 폰트, libepaper 정리${otherStillInstalled ? "" : ", REKOIT guard 제거"}`);
 
   await runSsh(ip, password, `
     rm -f /home/root/rekoit/install-hangul.sh
@@ -315,7 +314,7 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
     rm -f /home/root/rekoit/backup/font_existed
     find /home/root/rekoit -type d -empty -delete 2>/dev/null || true
   `);
-  logs.push("OK: ReKoIt 한글 입력 관련 파일 정리");
+  logs.push("OK: REKOIT 한글 입력 관련 파일 정리");
 
   // 3. 비활성 파티션 정리
   await runSsh(ip, password, `
@@ -413,18 +412,18 @@ async function cleanupCommon(ip: string, password: string, logs: string[]): Prom
     fi
     if [ -f /home/root/.bashrc ]; then
       sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-      sed -i '/# ReKoIt auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
+      sed -i '/# REKOIT auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
     fi
   `);
-  logs.push("OK: 로그인 ReKoIt 자동복구 스크립트 제거");
+  logs.push("OK: 로그인 REKOIT 자동복구 스크립트 제거");
 
-  // ReKoIt 디렉토리 전체 제거
+  // REKOIT 디렉토리 전체 제거
   await runSsh(ip, password, `
     find /home/root/rekoit -type f -delete 2>/dev/null || true
     find /home/root/rekoit -type d -empty -delete 2>/dev/null || true
     rm -rf /home/root/rekoit 2>/dev/null || true
   `);
-  logs.push("OK: ReKoIt 디렉토리 전체 제거");
+  logs.push("OK: REKOIT 디렉토리 전체 제거");
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {

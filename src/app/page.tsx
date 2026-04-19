@@ -8,7 +8,7 @@ import { useSetup } from "@/lib/store";
 
 export default function WelcomePage() {
   const router = useRouter();
-  const { state, setState } = useSetup();
+  const { state, setState, isLoaded } = useSetup();
   const [ip, setIp] = useState("10.11.99.1");
   const [password, setPassword] = useState("");
   const [mounted, setMounted] = useState(false);
@@ -17,19 +17,31 @@ export default function WelcomePage() {
   const [pingResult, setPingResult] = useState<"connected" | "disconnected" | null>(null);
 
   useEffect(() => {
-    if (state.ip) setIp(state.ip);
-    if (state.password) setPassword(state.password);
-    setMounted(true);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (isLoaded) {
+      if (state.ip) setIp(state.ip);
+      if (state.password) setPassword(state.password);
+      setMounted(true);
+    }
+  }, [isLoaded, state.ip, state.password]);
 
   const handlePing = async () => {
+    if (!ip || !password) {
+      setPingResult("disconnected");
+      return;
+    }
     setPinging(true);
     setPingResult(null);
     try {
-      const res = await fetch(`/api/ping?ip=${encodeURIComponent(ip)}`);
+      // 단순 Ping이 아닌 실제 SSH 인증까지 테스트하는 /api/ssh/test 사용
+      const res = await fetch("/api/ssh/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ip, password }),
+      });
       const data = await res.json();
-      setPingResult(data.reachable ? "connected" : "disconnected");
-      if (data.reachable) {
+      const success = res.ok && data.reachable === true;
+      setPingResult(success ? "connected" : "disconnected");
+      if (success) {
         setState({ ip, password, connected: true });
       }
     } catch {
@@ -42,6 +54,7 @@ export default function WelcomePage() {
   const isReachable = pingResult === "connected";
 
   const handleNext = () => {
+    if (!isReachable) return;
     setState({ ip, password, connected: true });
     router.push("/prerequisites");
   };
@@ -50,42 +63,29 @@ export default function WelcomePage() {
     <div className="animate-fade-in-up">
       <StepIndicator currentStep={0} />
 
-      <div className="space-y-10">
+      <div className="space-y-4">
         <div>
           <h1
             className="text-[36px] font-bold leading-tight"
-            style={{ color: "var(--text-primary)" }}
+            style={{ color: "#000000" }}
           >
-            ReKoIt
+            REKOIT
           </h1>
           <p
-            className="mt-3 text-[17px]"
-            style={{ color: "var(--text-muted)" }}
+            className="mt-3 text-[16px] font-medium"
+            style={{ color: "#666666" }}
           >
-            reMarkable 한글 입력과 블루투스 설치를 위해 USB 연결과 SSH 정보를 확인하세요.
+            reMarkable 기기에 한글 입력 엔진과 블루투스 도우미를 설치합니다. 시작을 위해 USB 연결과 SSH 정보를 확인하세요.
           </p>
         </div>
 
-        <div className="space-y-5 stagger-1">
-          <span
-            className="text-[12px] font-semibold uppercase tracking-[0.12em]"
-            style={{
-              color: "var(--text-muted)",
-              backgroundColor: "var(--bg-secondary)",
-              padding: "5px 14px",
-              borderRadius: "var(--radius-full)",
-              border: "1px solid var(--border-light)",
-            }}
-          >
-            1. 기기 연결
-          </span>
-
-          <div className="operator-card operator-card-strong" style={{ padding: "24px" }}>
+        <div className="stagger-1">
+          <div className="operator-card operator-card-strong" style={{ padding: "16px 20px", border: "1.5px solid #000000" }}>
             <div className="space-y-5">
               <div>
                 <label
-                  className="block text-[13px] font-medium mb-2"
-                  style={{ color: "var(--text-muted)" }}
+                  className="block text-[13px] font-bold mb-1.5 uppercase tracking-wider"
+                  style={{ color: "#000000" }}
                 >
                   IP 주소
                 </label>
@@ -95,13 +95,14 @@ export default function WelcomePage() {
                   onChange={(e) => {
                     setIp(e.target.value);
                     setPingResult(null);
+                    setState({ connected: false });
                   }}
-                  className="w-full text-[17px] rounded-xl input-enhanced"
+                  className="w-full text-[16px] rounded-none input-enhanced"
                   style={{
-                    backgroundColor: "var(--bg-card)",
-                    border: "1.5px solid var(--border-light)",
-                    color: "var(--text-primary)",
-                    padding: "14px 20px",
+                    backgroundColor: "#ffffff",
+                    border: "1.5px solid #000000",
+                    color: "#000000",
+                    padding: "12px 16px",
                   }}
                   placeholder="10.11.99.1"
                 />
@@ -109,8 +110,8 @@ export default function WelcomePage() {
 
               <div>
                 <label
-                  className="block text-[13px] font-medium mb-2"
-                  style={{ color: "var(--text-muted)" }}
+                  className="block text-[13px] font-bold mb-1.5 uppercase tracking-wider"
+                  style={{ color: "#000000" }}
                 >
                   SSH 비밀번호
                 </label>
@@ -121,13 +122,14 @@ export default function WelcomePage() {
                     onChange={(e) => {
                       setPassword(e.target.value);
                       setPingResult(null);
+                      setState({ connected: false });
                     }}
-                    className="w-full pr-12 text-[17px] rounded-xl input-enhanced"
+                    className="w-full pr-12 text-[16px] rounded-none input-enhanced"
                     style={{
-                      backgroundColor: "var(--bg-card)",
-                      border: "1.5px solid var(--border-light)",
-                      color: "var(--text-primary)",
-                      padding: "14px 20px",
+                      backgroundColor: "#ffffff",
+                      border: "1.5px solid #000000",
+                      color: "#000000",
+                      padding: "12px 16px",
                     }}
                     placeholder="비밀번호"
                   />
@@ -135,9 +137,9 @@ export default function WelcomePage() {
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-4 top-1/2 -translate-y-1/2 p-1"
-                    style={{ color: "var(--text-muted)" }}
+                    style={{ color: "#000000" }}
                   >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                       {showPassword ? (
                         <>
                           <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
@@ -153,65 +155,84 @@ export default function WelcomePage() {
                   </button>
                 </div>
                 <p
-                  className="mt-2 text-[13px]"
-                  style={{ color: "var(--text-muted)" }}
+                  className="mt-2 text-[12px] font-medium"
+                  style={{ color: "#666666" }}
                 >
                   설정 &gt; 일반 &gt; 도움말 &gt; 저작권 및 라이선스에서 확인할 수 있습니다.
                 </p>
               </div>
 
               <div
-                className="rounded-xl"
+                className="rounded-none"
                 style={{
-                  backgroundColor: "var(--bg-secondary)",
-                  padding: "18px 20px",
-                  border: "1px solid var(--border-light)",
+                  backgroundColor: "#f6f6f6",
+                  padding: "16px 20px",
+                  borderLeft: "4px solid #000000",
+                  borderTop: "1.5px solid #000000",
+                  borderRight: "1.5px solid #000000",
+                  borderBottom: "1.5px solid #000000",
                 }}
               >
-                <p className="text-[14px] font-medium" style={{ color: "var(--text-primary)" }}>
-                  연결 전에 확인하세요
-                </p>
-                <ul className="mt-2 space-y-1 text-[13px]" style={{ color: "var(--text-muted)" }}>
-                  <li>- USB 케이블이 연결되어 있어야 합니다.</li>
-                  <li>- 기기에서 개발자 모드와 SSH가 켜져 있어야 합니다.</li>
-                  <li>- 연결 확인이 끝나면 사전 준비와 기기 확인을 진행합니다.</li>
+                <div className="flex items-center gap-2 mb-2.5">
+                  <span className="text-[18px]">⚠️</span>
+                  <p className="text-[16px] font-bold" style={{ color: "#000000" }}>
+                    연결 전에 확인하세요
+                  </p>
+                </div>
+                <ul className="space-y-2 text-[15px]" style={{ color: "#333333" }}>
+                  <li className="flex items-start gap-3">
+                    <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                    <span className="font-medium">USB 케이블이 연결되어 있어야 합니다.</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                    <span className="font-medium">기기에서 개발자 모드와 SSH가 켜져 있어야 합니다.</span>
+                  </li>
                 </ul>
               </div>
 
               <Button
                 onClick={handlePing}
                 loading={pinging}
-                disabled={!mounted || !ip || !password}
-                variant="secondary"
-                className="w-full"
-                size="lg"
+                disabled={!isLoaded || !mounted || !ip || !password}
+                className="w-full font-bold tracking-tight"
+                style={{
+                  backgroundColor: isReachable ? "#0071e3" : "#000000",
+                  borderColor: isReachable ? "#0071e3" : "#000000",
+                  color: "#ffffff",
+                  padding: "16px 40px",
+                  fontSize: "16px",
+                  borderRadius: "6px",
+                  boxShadow: isReachable ? "0 4px 14px rgba(0, 113, 227, 0.25)" : "0 4px 12px rgba(0, 0, 0, 0.15)",
+                  transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)"
+                }}
               >
-                USB 연결 확인
+                {isReachable ? "USB 연결 확인 완료 ✓" : "USB 연결 확인"}
               </Button>
 
-              {pingResult && (
+              {pingResult && !isReachable && (
                 <div
-                  className="rounded-xl text-[16px] animate-fade-in"
+                  className="text-[14px] animate-fade-in text-center mt-4"
                   style={{
-                    backgroundColor: isReachable ? "var(--success-light)" : "var(--error-light)",
-                    color: isReachable ? "var(--success)" : "var(--error)",
-                    padding: "20px 24px",
+                    color: "#000000",
+                    borderTop: "1px solid #000000",
+                    paddingTop: "12px",
+                    fontWeight: "500"
                   }}
                 >
-                  {isReachable
-                    ? "USB 연결 확인됨. 다음 단계로 진행할 수 있습니다."
-                    : "연결할 수 없습니다. USB 케이블과 SSH 비밀번호를 다시 확인하세요."}
+                  연결할 수 없습니다. USB 케이블과 SSH 비밀번호를 다시 확인하세요.
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        <div className="flex justify-end pt-4 stagger-2">
+        <div className="flex justify-end stagger-2 pt-6">
           <Button
             onClick={handleNext}
-            disabled={!mounted || !isReachable || !password}
+            disabled={!isLoaded || !mounted || !isReachable || !password}
             size="lg"
+            className="px-16"
           >
             다음
           </Button>

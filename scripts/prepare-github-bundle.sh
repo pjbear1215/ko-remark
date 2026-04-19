@@ -41,10 +41,13 @@ copy_dir "scripts" "scripts"
 
 # Keep only the source-based resources needed to rebuild/install locally.
 mkdir -p "$OUT_DIR/resources/source/hangul-daemon"
+mkdir -p "$OUT_DIR/resources/source/rekoit-bt-helper"
 copy_file "resources/install.sh" "resources/install.sh"
 copy_file "resources/hangul-daemon.service" "resources/hangul-daemon.service"
 copy_file "resources/source/hangul-daemon/go.mod" "resources/source/hangul-daemon/go.mod"
 copy_file "resources/source/hangul-daemon/main.go" "resources/source/hangul-daemon/main.go"
+copy_file "resources/source/rekoit-bt-helper/go.mod" "resources/source/rekoit-bt-helper/go.mod"
+copy_file "resources/source/rekoit-bt-helper/main.go" "resources/source/rekoit-bt-helper/main.go"
 
 cat <<MSG
 Prepared GitHub bundle at:

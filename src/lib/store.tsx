@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback } from "react";
 
 interface SetupState {
   deviceType: "paper-pro-move" | "paper-pro" | null;
@@ -20,6 +20,7 @@ interface SetupState {
 interface SetupContextType {
   state: SetupState;
   setState: (updates: Partial<SetupState>) => void;
+  isLoaded: boolean;
 }
 
 const CIPHER_KEY = "ko-remark-v1";
@@ -87,35 +88,47 @@ const defaultState: SetupState = {
 const SetupContext = createContext<SetupContextType | null>(null);
 
 export function SetupProvider({ children }: { children: ReactNode }) {
-  const [state, setStateInternal] = useState<SetupState>(() => ({
-    ...defaultState,
-    ip: getStoredValue("remarkable-ip", ""),
-    password: getStoredEncrypted("remarkable-pw"),
-    deviceType: (getStoredValue("remarkable-device", "") as SetupState["deviceType"]) || null,
-    swapLeftCtrlCapsLock: getStoredValue("remarkable-swap-left-ctrl-capslock", "") === "1",
-  }));
+  const [state, setStateInternal] = useState<SetupState>(defaultState);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  const setState = (updates: Partial<SetupState>) => {
-    if (typeof window !== "undefined") {
-      try {
-        if (updates.ip !== undefined) localStorage.setItem("remarkable-ip", updates.ip);
-        if (updates.password !== undefined) localStorage.setItem("remarkable-pw", encryptValue(updates.password));
-        if (updates.deviceType !== undefined && updates.deviceType !== null) {
-          localStorage.setItem("remarkable-device", updates.deviceType);
-        }
-        if (updates.swapLeftCtrlCapsLock !== undefined) {
-          localStorage.setItem(
-            "remarkable-swap-left-ctrl-capslock",
-            updates.swapLeftCtrlCapsLock ? "1" : "0",
-          );
-        }
-      } catch { /* localStorage unavailable */ }
-    }
-    setStateInternal((prev) => ({ ...prev, ...updates }));
-  };
+  useEffect(() => {
+    // 마운트 후 localStorage에서 로드하여 하이드레이션 오류 방지
+    const loadedState: Partial<SetupState> = {
+      ip: getStoredValue("remarkable-ip", ""),
+      password: getStoredEncrypted("remarkable-pw"),
+      deviceType: (getStoredValue("remarkable-device", "") as SetupState["deviceType"]) || null,
+      swapLeftCtrlCapsLock: getStoredValue("remarkable-swap-left-ctrl-capslock", "") === "1",
+    };
+    setStateInternal((prev) => ({ ...prev, ...loadedState }));
+    setIsLoaded(true);
+  }, []);
+
+  const setState = useCallback((updates: Partial<SetupState>) => {
+    setStateInternal((prev) => {
+      const next = { ...prev, ...updates };
+      if (typeof window !== "undefined") {
+        try {
+          if (updates.ip !== undefined) localStorage.setItem("remarkable-ip", next.ip);
+          if (updates.password !== undefined) localStorage.setItem("remarkable-pw", encryptValue(next.password));
+          if (updates.deviceType !== undefined && updates.deviceType !== null) {
+            localStorage.setItem("remarkable-device", updates.deviceType);
+          }
+          if (updates.swapLeftCtrlCapsLock !== undefined) {
+            localStorage.setItem(
+              "remarkable-swap-left-ctrl-capslock",
+              next.swapLeftCtrlCapsLock ? "1" : "0",
+            );
+          }
+        } catch { /* localStorage unavailable */ }
+      }
+      return next;
+    });
+  }, []);
+
+  const value = useMemo(() => ({ state, setState, isLoaded }), [state, setState, isLoaded]);
 
   return (
-    <SetupContext.Provider value={{ state, setState }}>
+    <SetupContext.Provider value={value}>
       {children}
     </SetupContext.Provider>
   );

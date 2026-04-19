@@ -21,41 +21,17 @@ export default function Checkbox({
 }: CheckboxProps): ReactNode {
   return (
     <label
-      className={`flex items-start gap-4 py-5 px-6 rounded-xl cursor-pointer ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-      style={{
-        backgroundColor: checked ? "rgba(10,132,255,0.08)" : "rgba(255,255,255,0.55)",
-        border: checked
-          ? "1px solid rgba(10,132,255,0.34)"
-          : "1px solid var(--border-light)",
-        boxShadow: checked ? "var(--shadow-sm)" : "none",
-        transition: "all 200ms cubic-bezier(0.4, 0, 0.2, 1), background-color 300ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 250ms cubic-bezier(0.4, 0, 0.2, 1)",
-      }}
+      className={`flex items-start gap-5 cursor-pointer w-full transition-all ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
     >
-      {/* 체크박스 시각 요소 */}
+      {/* 체크박스 시각 요소: 설치 전 필수 확인 스타일 (w-6 h-6) */}
       <div
-        className="flex items-center justify-center flex-shrink-0 mt-0.5"
-        style={{
-          width: "20px",
-          height: "20px",
-          backgroundColor: checked ? "var(--apple-blue)" : "rgba(255,255,255,0.72)",
-          border: checked ? "none" : "1.5px solid rgba(126, 120, 111, 0.48)",
-          borderRadius: "6px",
-          transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
-          boxShadow: checked ? "var(--shadow-xs)" : "none",
-        }}
+        className={`mt-0.5 w-6 h-6 shrink-0 border-2 flex items-center justify-center transition-colors ${
+          checked ? "bg-[var(--success)] border-[var(--success)]" : "border-gray-300"
+        }`}
+        style={{ borderRadius: "0px" }}
       >
         {checked && (
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="white"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="animate-checkmark"
-          >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4">
             <polyline points="20 6 9 17 4 12" />
           </svg>
         )}
@@ -70,15 +46,13 @@ export default function Checkbox({
       />
       <div className="flex flex-col">
         <span
-          className="text-[16px] font-medium leading-[1.5]"
-          style={{ color: "var(--text-primary)" }}
+          className={`text-[16px] font-bold leading-tight transition-colors ${checked ? "text-[var(--success)]" : "text-[var(--text-primary)]"}`}
         >
           {label}
         </span>
         {description && (
           <span
-            className="text-[14px] mt-1.5 block leading-[1.6]"
-            style={{ color: "var(--text-muted)" }}
+            className="text-[12px] text-[var(--text-muted)] mt-2 leading-relaxed font-medium"
           >
             {description}
           </span>

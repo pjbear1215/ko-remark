@@ -87,28 +87,27 @@ export default function ConnectionPage() {
     <div className="animate-fade-in-up">
       <StepIndicator currentStep={2} />
 
-      <div className="space-y-10">
+      <div className="space-y-8">
         <div>
           <h1
-            className="text-[36px] font-bold leading-tight"
+            className="text-[32px] font-bold tracking-tight"
             style={{ color: "var(--text-primary)" }}
           >
             기기 확인
           </h1>
           <p
-            className="mt-3 text-[17px]"
+            className="mt-2 text-[15px] font-medium"
             style={{ color: "var(--text-muted)" }}
           >
-            연결된 기기와 지원 모델 여부를 확인합니다.
+            reMarkable 기기 연결 상태와 지원 모델 여부를 확인합니다.
           </p>
         </div>
 
         <div
-          className="card-interactive rounded-xl flex items-center justify-between stagger-1"
-          style={{ backgroundColor: "var(--bg-secondary)", padding: "16px 24px" }}
+          className="flex items-center justify-between py-2 stagger-1"
         >
           <div>
-            <span className="text-[15px]" style={{ color: "var(--text-muted)" }}>
+            <span className="text-[15px] font-mono opacity-60" style={{ color: "var(--text-muted)" }}>
               {state.ip}
             </span>
           </div>
@@ -167,7 +166,7 @@ export default function ConnectionPage() {
                 <p className="text-[14px]" style={{ color: "var(--text-muted)" }}>
                   비밀번호와 USB 연결 상태를 다시 확인한 뒤 처음 화면으로 돌아가세요.
                 </p>
-                <Button variant="secondary" size="sm" onClick={() => router.push("/")}>
+                <Button variant="secondary" size="sm" onClick={() => router.push("/")} icon={<svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" fill="none"><polyline points="15 18 9 12 15 6" /></svg>}>
                   처음으로
                 </Button>
               </div>
@@ -227,8 +226,12 @@ export default function ConnectionPage() {
           </div>
         )}
 
-        <div className="flex justify-between pt-4">
-          <Button variant="ghost" onClick={() => router.push("/prerequisites")}>
+        <div className="flex justify-between pt-4 stagger-3">
+          <Button
+            variant="ghost"
+            onClick={() => router.push("/prerequisites")}
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>}
+          >
             이전
           </Button>
           <Button

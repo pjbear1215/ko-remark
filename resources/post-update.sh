@@ -1,5 +1,5 @@
 #!/bin/sh
-# rekoit-post-update: 펌웨어 업데이트 직후 (재부팅 전) ReKoIt 런타임 자동 주입
+# rekoit-post-update: 펌웨어 업데이트 직후 (재부팅 전) REKOIT 런타임 자동 주입
 # SWUpdate -p 옵션으로 호출됨
 
 LOG="/home/root/rekoit/post-update.log"
@@ -54,7 +54,7 @@ fi
 
 mkdir -p /mnt/updated/etc/swupdate/conf.d
 cat > /mnt/updated/etc/swupdate/conf.d/99-rekoit-postupdate << 'CONFD_EOF'
-# ReKoIt post-update hook (auto-replicated)
+# REKOIT post-update hook (auto-replicated)
 SWUPDATE_ARGS+=" -p /home/root/rekoit/post-update.sh"
 CONFD_EOF
 echo "[$(date)] OK: conf.d 자기 복제" >> "$LOG"
@@ -65,7 +65,7 @@ if [ "$INSTALL_BT" = "1" ] && [ -f /opt/rekoit/factory-guard.sh ]; then
     chmod +x /mnt/updated/opt/rekoit/factory-guard.sh
     cat > /mnt/updated/etc/systemd/system/rekoit-factory-guard.service << 'FGUARD_EOF'
 [Unit]
-Description=ReKoIt Factory Reset Guard
+Description=REKOIT Factory Reset Guard
 After=home.mount
 Wants=home.mount
 Before=xochitl.service

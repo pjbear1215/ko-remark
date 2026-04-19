@@ -12,13 +12,79 @@ list_paired_bluetooth_devices() {
     } | awk '/^Device [0-9A-F:]+/ {print $2} /^[0-9A-F:]{17}$/ {print $1}' | awk '!seen[$0]++'
 }
 
+get_bluetooth_device_name() {
+    ADDR="$1"
+    INFO=$(bluetoothctl info "$ADDR" 2>/dev/null || true)
+    NAME=$(printf '%s\n' "$INFO" | sed -n 's/^[[:space:]]*Name: //p' | head -n 1)
+    if [ -n "$NAME" ]; then
+        printf '%s\n' "$NAME"
+        return 0
+    fi
+    printf '%s\n' "$INFO" | sed -n 's/^[[:space:]]*Alias: //p' | head -n 1
+}
+
+find_latest_visible_bluetooth_address_by_name() {
+    TARGET_NAME="$1"
+    [ -n "$TARGET_NAME" ] || return 1
+
+    DEVICES=$(bluetoothctl devices 2>/dev/null || true)
+    MATCH=$(printf '%s\n' "$DEVICES" | awk -v target="$TARGET_NAME" '
+        /^Device [0-9A-F:]+ / {
+            addr=$2
+            name=substr($0, index($0, $3))
+            if (name == target) {
+                latest=addr
+            }
+        }
+        END {
+            if (latest != "") {
+                print latest
+            }
+        }
+    ')
+    if [ -n "$MATCH" ]; then
+        printf '%s\n' "$MATCH"
+        return 0
+    fi
+
+    SCAN_OUT=$(bluetoothctl --timeout 6 scan on 2>&1 || true)
+    OBSERVED_ADDRS=$(printf '%s\n' "$SCAN_OUT" | awk '/Device [0-9A-F:]+/ {print $3}' | sort -u)
+    for CANDIDATE_ADDR in $OBSERVED_ADDRS; do
+        [ -n "$CANDIDATE_ADDR" ] || continue
+        CANDIDATE_INFO=$(bluetoothctl info "$CANDIDATE_ADDR" 2>/dev/null || true)
+        CANDIDATE_NAME=$(printf '%s\n' "$CANDIDATE_INFO" | sed -n 's/^[[:space:]]*Name: //p' | head -n 1)
+        CANDIDATE_ALIAS=$(printf '%s\n' "$CANDIDATE_INFO" | sed -n 's/^[[:space:]]*Alias: //p' | head -n 1)
+        if [ "$CANDIDATE_NAME" = "$TARGET_NAME" ] || [ "$CANDIDATE_ALIAS" = "$TARGET_NAME" ]; then
+            printf '%s\n' "$CANDIDATE_ADDR"
+            return 0
+        fi
+    done
+    return 1
+}
+
+resolve_reconnect_bluetooth_address() {
+    ADDR="$1"
+    [ -n "$ADDR" ] || return 1
+    NAME=$(get_bluetooth_device_name "$ADDR")
+    RESOLVED=$(find_latest_visible_bluetooth_address_by_name "$NAME" 2>/dev/null || true)
+    if [ -n "$RESOLVED" ]; then
+        printf '%s\n' "$RESOLVED"
+        return 0
+    fi
+    printf '%s\n' "$ADDR"
+}
+
 reconnect_paired_bluetooth_devices() {
     CONNECTED=1
     for addr in $(list_paired_bluetooth_devices); do
         [ -n "$addr" ] || continue
-        bluetoothctl connect "$addr" 2>/dev/null || true
+        TARGET_ADDR=$(resolve_reconnect_bluetooth_address "$addr" 2>/dev/null || printf '%s\n' "$addr")
+        bluetoothctl connect "$TARGET_ADDR" 2>/dev/null || true
         sleep 2
-        if bluetoothctl info "$addr" 2>/dev/null | grep -q 'Connected: yes'; then
+        if bluetoothctl info "$TARGET_ADDR" 2>/dev/null | grep -q 'Connected: yes'; then
+            if [ "$TARGET_ADDR" != "$addr" ] && [ -f "$STATE_FILE" ]; then
+                sed -i "s/^BT_DEVICE_ADDRESS=.*/BT_DEVICE_ADDRESS=$TARGET_ADDR/" "$STATE_FILE" 2>/dev/null || true
+            fi
             CONNECTED=0
             break
         fi

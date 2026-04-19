@@ -3,7 +3,7 @@ import "./globals.css";
 import Providers from "./providers";
 
 export const metadata: Metadata = {
-  title: "ReKoIt",
+  title: "REKOIT",
   description: "reMarkable 한글 입력 + 블루투스 도구",
 };
 
@@ -30,15 +30,16 @@ export default function RootLayout({
           >
             <div>
               <p
-                className="text-[15px] font-bold tracking-[0.18em] uppercase"
+                className="text-[16px] font-bold tracking-[0.2em] uppercase"
                 style={{ color: "var(--text-primary)" }}
               >
-                ReKoIt
+                REKOIT
               </p>
-              <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>
-                리마커블 한글 입력 + 블루투스 도구
+              <p className="text-[12px] mt-1 font-medium" style={{ color: "var(--text-muted)" }}>
+                <strong style={{ color: "var(--text-primary)" }}>re</strong>Markable <strong style={{ color: "var(--text-primary)" }}>Ko</strong>rean <strong style={{ color: "var(--text-primary)" }}>I</strong>nput <strong style={{ color: "var(--text-primary)" }}>T</strong>oolkit
               </p>
             </div>
+
             <span
               className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em]"
               style={{
@@ -53,7 +54,7 @@ export default function RootLayout({
                 className="inline-block w-2 h-2 rounded-full"
                 style={{ backgroundColor: "var(--accent-secondary)" }}
               />
-              USB guided flow
+              단계별 설치 안내
             </span>
           </header>
 

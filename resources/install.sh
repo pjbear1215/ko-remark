@@ -69,16 +69,26 @@ ensure_tmpfs_libepaper() {
 }
 
 echo "=========================================="
-echo " ReKoIt Installer v2.4"
+echo " REKOIT Installer v2.4"
 echo "=========================================="
 echo ""
 
 # 설치 모드: env 우선, 없으면 마지막 설치 상태 유지
+ENV_INSTALL_HANGUL=$INSTALL_HANGUL
+ENV_INSTALL_BT=$INSTALL_BT
+ENV_BLUETOOTH_POWER_ON=$BLUETOOTH_POWER_ON
+ENV_SWAP_LEFT_CTRL_CAPSLOCK=$SWAP_LEFT_CTRL_CAPSLOCK
+ENV_BT_DEVICE_ADDRESS=$BT_DEVICE_ADDRESS
+ENV_BT_DEVICE_NAME=$BT_DEVICE_NAME
+ENV_BT_DEVICE_IRK=$BT_DEVICE_IRK
+
 STATE_HANGUL=0
 STATE_BT=0
 STATE_BLUETOOTH_POWER_ON=0
 STATE_SWAP_LEFT_CTRL_CAPSLOCK=0
 STATE_BT_DEVICE_ADDRESS=""
+STATE_BT_DEVICE_NAME=""
+STATE_BT_DEVICE_IRK=""
 STATE_LOCALES=""
 if [ -f "$STATE_FILE" ]; then
     . "$STATE_FILE"
@@ -87,15 +97,20 @@ if [ -f "$STATE_FILE" ]; then
     STATE_BLUETOOTH_POWER_ON=${BLUETOOTH_POWER_ON:-0}
     STATE_SWAP_LEFT_CTRL_CAPSLOCK=${SWAP_LEFT_CTRL_CAPSLOCK:-0}
     STATE_BT_DEVICE_ADDRESS=${BT_DEVICE_ADDRESS:-}
+    STATE_BT_DEVICE_NAME=${BT_DEVICE_NAME:-}
+    STATE_BT_DEVICE_IRK=${BT_DEVICE_IRK:-}
     STATE_LOCALES=${KEYBOARD_LOCALES:-}
 fi
-INSTALL_HANGUL=${INSTALL_HANGUL:-$STATE_HANGUL}
-INSTALL_BT=${INSTALL_BT:-$STATE_BT}
-BLUETOOTH_POWER_ON=${BLUETOOTH_POWER_ON:-$STATE_BLUETOOTH_POWER_ON}
-SWAP_LEFT_CTRL_CAPSLOCK=${SWAP_LEFT_CTRL_CAPSLOCK:-$STATE_SWAP_LEFT_CTRL_CAPSLOCK}
-BT_DEVICE_ADDRESS=${BT_DEVICE_ADDRESS:-$STATE_BT_DEVICE_ADDRESS}
+
+INSTALL_HANGUL=${ENV_INSTALL_HANGUL:-$STATE_HANGUL}
+INSTALL_BT=${ENV_INSTALL_BT:-$STATE_BT}
+BLUETOOTH_POWER_ON=${ENV_BLUETOOTH_POWER_ON:-$STATE_BLUETOOTH_POWER_ON}
+SWAP_LEFT_CTRL_CAPSLOCK=${ENV_SWAP_LEFT_CTRL_CAPSLOCK:-$STATE_SWAP_LEFT_CTRL_CAPSLOCK}
+BT_DEVICE_ADDRESS=${ENV_BT_DEVICE_ADDRESS:-$STATE_BT_DEVICE_ADDRESS}
+BT_DEVICE_NAME=${ENV_BT_DEVICE_NAME:-$STATE_BT_DEVICE_NAME}
+BT_DEVICE_IRK=${ENV_BT_DEVICE_IRK:-$STATE_BT_DEVICE_IRK}
 KEYBOARD_LOCALES=""
-printf 'INSTALL_HANGUL=%s\nINSTALL_BT=%s\nBLUETOOTH_POWER_ON=%s\nSWAP_LEFT_CTRL_CAPSLOCK=%s\nBT_DEVICE_ADDRESS=%s\nKEYBOARD_LOCALES=%s\n' "$INSTALL_HANGUL" "$INSTALL_BT" "$BLUETOOTH_POWER_ON" "$SWAP_LEFT_CTRL_CAPSLOCK" "$BT_DEVICE_ADDRESS" "$KEYBOARD_LOCALES" > "$STATE_FILE"
+printf 'INSTALL_HANGUL=%s\nINSTALL_BT=%s\nBLUETOOTH_POWER_ON=%s\nSWAP_LEFT_CTRL_CAPSLOCK=%s\nBT_DEVICE_ADDRESS=%s\nBT_DEVICE_NAME=%s\nBT_DEVICE_IRK=%s\nKEYBOARD_LOCALES=%s\n' "$INSTALL_HANGUL" "$INSTALL_BT" "$BLUETOOTH_POWER_ON" "$SWAP_LEFT_CTRL_CAPSLOCK" "$BT_DEVICE_ADDRESS" "$BT_DEVICE_NAME" "$BT_DEVICE_IRK" "$KEYBOARD_LOCALES" > "$STATE_FILE"
 echo "  Mode: hangul=$INSTALL_HANGUL, bt=$INSTALL_BT, btPower=$BLUETOOTH_POWER_ON, swapCtrlCaps=$SWAP_LEFT_CTRL_CAPSLOCK"
 echo ""
 
@@ -176,13 +191,13 @@ for script in $POST_UPDATE_SCRIPTS; do
 done
 echo "  OK: post-update helpers ready"
 
-# ReKoIt factory guard 설치 (rootfs에 직접)
+# REKOIT factory guard 설치 (rootfs에 직접)
 if [ "$INSTALL_BT" = "1" ]; then
-echo "  Installing ReKoIt safety guard..."
+echo "  Installing REKOIT safety guard..."
 mkdir -p /opt/rekoit
 cat > /opt/rekoit/factory-guard.sh << 'FGUARD_SCRIPT_EOF'
 #!/bin/sh
-# rekoit-factory-guard: 팩토리 리셋 후 ReKoIt rootfs 흔적 자동 정리
+# rekoit-factory-guard: 팩토리 리셋 후 REKOIT rootfs 흔적 자동 정리
 HOME_STATE="/home/root/rekoit"
 
 HAS_BT_ARTIFACTS=0
@@ -206,7 +221,7 @@ if [ -d "$HOME_STATE" ]; then
 fi
 mount -o remount,rw / 2>/dev/null || true
 rm -f /etc/swupdate/conf.d/99-rekoit-postupdate
-# ReKoIt 공통 서비스와 한글 입력 런타임 비활성화 및 제거
+# REKOIT 공통 서비스와 한글 입력 런타임 비활성화 및 제거
 systemctl stop hangul-daemon.service 2>/dev/null || true
 systemctl disable hangul-daemon.service 2>/dev/null || true
 systemctl disable rekoit-restore.service 2>/dev/null || true
@@ -242,7 +257,7 @@ chmod +x /opt/rekoit/factory-guard.sh
 
 cat > /etc/systemd/system/rekoit-factory-guard.service << 'FGUARD_SVC_EOF'
 [Unit]
-Description=ReKoIt Factory Reset Guard
+Description=REKOIT Factory Reset Guard
 After=home.mount
 Wants=home.mount
 Before=xochitl.service
@@ -257,7 +272,7 @@ WantedBy=multi-user.target
 FGUARD_SVC_EOF
 systemctl daemon-reload
 systemctl enable rekoit-factory-guard.service 2>/dev/null || true
-echo "  OK: ReKoIt safety guard installed"
+echo "  OK: REKOIT safety guard installed"
 else
 rm -f /etc/systemd/system/rekoit-factory-guard.service
 rm -f /etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service
@@ -267,15 +282,25 @@ fi
 # swupdate conf.d 등록 (현재 세션용)
 mkdir -p /etc/swupdate/conf.d
 cat > /etc/swupdate/conf.d/99-rekoit-postupdate << 'CONFD_EOF'
-# ReKoIt post-update hook
+# REKOIT post-update hook
 SWUPDATE_ARGS+=" -p /home/root/rekoit/post-update.sh"
 CONFD_EOF
 echo "  OK: swupdate conf.d registered"
 
 # 10. rootfs 영구 보존 (/etc는 overlayfs + tmpfs — 재부팅 시 유실)
 echo "[10/10] Writing persistent files to rootfs..."
-ROOTFS_DEV=$(mount | grep ' / ' | head -n1 | awk '{print $1}')
-if [ -n "$ROOTFS_DEV" ]; then
+CURRENT_ROOT=$(mount | grep ' / ' | head -n1 | awk '{print $1}')
+ROOTFS_DEV=""
+case "$CURRENT_ROOT" in
+    /dev/mmcblk0p2) ROOTFS_DEV="/dev/mmcblk0p3" ;;
+    /dev/mmcblk0p3) ROOTFS_DEV="/dev/mmcblk0p2" ;;
+    *)
+        # 슬롯 기반이 아닌 경우(예: Ferrari) fallback
+        ROOTFS_DEV=$(findmnt -n -o SOURCE / 2>/dev/null | grep mmcblk | head -1)
+        ;;
+esac
+
+if [ -n "$ROOTFS_DEV" ] && [ "$ROOTFS_DEV" != "$CURRENT_ROOT" ]; then
     mkdir -p /mnt/rootfs
     umount /mnt/rootfs 2>/dev/null || true
     mount -o rw "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null || mount "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null || true
@@ -302,7 +327,9 @@ if [ -n "$ROOTFS_DEV" ]; then
             if [ "$INSTALL_BT" = "1" ]; then
                 sed -i 's|^ConditionPathIsDirectory=/sys/class/bluetooth|#ConditionPathIsDirectory=/sys/class/bluetooth|' /mnt/rootfs/usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
                 if [ -f /mnt/rootfs/etc/bluetooth/main.conf ] && ! grep -q '^Privacy' /mnt/rootfs/etc/bluetooth/main.conf; then
-                    sed -i '/^\[General\]/a Privacy = off' /mnt/rootfs/etc/bluetooth/main.conf
+                    sed -i '/^\[General\]/a Privacy = device' /mnt/rootfs/etc/bluetooth/main.conf
+                elif [ -f /mnt/rootfs/etc/bluetooth/main.conf ]; then
+                    sed -i 's/^Privacy.*/Privacy = device/' /mnt/rootfs/etc/bluetooth/main.conf
                 fi
                 if [ -f /mnt/rootfs/etc/bluetooth/main.conf ] && ! grep -q '^FastConnectable = true$' /mnt/rootfs/etc/bluetooth/main.conf; then
                     if grep -q '^#\?FastConnectable' /mnt/rootfs/etc/bluetooth/main.conf 2>/dev/null; then
@@ -331,13 +358,13 @@ if [ -n "$ROOTFS_DEV" ]; then
             mkdir -p /mnt/rootfs/etc/swupdate/conf.d
             cp /etc/swupdate/conf.d/99-rekoit-postupdate /mnt/rootfs/etc/swupdate/conf.d/ 2>/dev/null || true
 
-            # ReKoIt 복구 서비스 (부팅 시 안전망)
+            # REKOIT 복구 서비스 (부팅 시 안전망)
             if [ -f /etc/systemd/system/rekoit-restore.service ]; then
                 cp /etc/systemd/system/rekoit-restore.service /mnt/rootfs/etc/systemd/system/
                 ln -sf /etc/systemd/system/rekoit-restore.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/rekoit-restore.service
             fi
 
-        # ReKoIt factory guard 서비스 (팩토리 리셋 안전장치)
+        # REKOIT factory guard 서비스 (팩토리 리셋 안전장치)
         if [ "$INSTALL_BT" = "1" ] && [ -f /etc/systemd/system/rekoit-factory-guard.service ]; then
             cp /etc/systemd/system/rekoit-factory-guard.service /mnt/rootfs/etc/systemd/system/
             ln -sf /etc/systemd/system/rekoit-factory-guard.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service
@@ -354,7 +381,7 @@ if [ -n "$ROOTFS_DEV" ]; then
     fi
     umount /mnt/rootfs 2>/dev/null || true
 else
-    echo "  WARN: rootfs device not found"
+    echo "  OK: Rootfs persistence skipped (active partition only)"
 fi
 
 # Restart services
@@ -372,7 +399,7 @@ fi
 # Start hangul-daemon
 if [ "$INSTALL_HANGUL" = "1" ] && [ -f "$BASEDIR/hangul-daemon" ]; then
     echo "  Starting hangul-daemon..."
-    systemctl start hangul-daemon.service 2>/dev/null || true
+    systemctl restart hangul-daemon.service 2>/dev/null || true
     sleep 2
 fi
 

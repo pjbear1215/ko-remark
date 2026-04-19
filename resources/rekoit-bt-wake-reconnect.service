@@ -1,5 +1,5 @@
 [Unit]
-Description=ReKoIt Bluetooth Wake Reconnect Monitor
+Description=REKOIT Bluetooth Wake Reconnect Monitor
 After=bluetooth.service systemd-journald.service
 Requires=bluetooth.service systemd-journald.service
 

@@ -35,14 +35,24 @@ apply_bt_runtime_config() {
         sed -i 's|^ConditionPathIsDirectory=/sys/class/bluetooth|#ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
         if [ -f /etc/bluetooth/main.conf ]; then
             if grep -q '^#\?Privacy' /etc/bluetooth/main.conf 2>/dev/null; then
-                sed -i 's/^#\?Privacy.*/Privacy = off/' /etc/bluetooth/main.conf 2>/dev/null || true
+                sed -i 's/^#\?Privacy.*/Privacy = device/' /etc/bluetooth/main.conf 2>/dev/null || true
             else
-                sed -i '/^\[General\]/a Privacy = off' /etc/bluetooth/main.conf
+                sed -i '/^\[General\]/a Privacy = device' /etc/bluetooth/main.conf
             fi
             if grep -q '^#\?FastConnectable' /etc/bluetooth/main.conf 2>/dev/null; then
                 sed -i 's/^#\?FastConnectable.*/FastConnectable = true/' /etc/bluetooth/main.conf 2>/dev/null || true
             else
                 sed -i '/^\[General\]/a FastConnectable = true' /etc/bluetooth/main.conf
+            fi
+            if grep -q '^#\?JustWorksRepairing' /etc/bluetooth/main.conf 2>/dev/null; then
+                sed -i 's/^#\?JustWorksRepairing.*/JustWorksRepairing = always/' /etc/bluetooth/main.conf 2>/dev/null || true
+            else
+                sed -i '/^\[General\]/a JustWorksRepairing = always' /etc/bluetooth/main.conf
+            fi
+            if grep -q '^#\?ControllerMode' /etc/bluetooth/main.conf 2>/dev/null; then
+                sed -i 's/^#\?ControllerMode.*/ControllerMode = le/' /etc/bluetooth/main.conf 2>/dev/null || true
+            else
+                sed -i '/^\[General\]/a ControllerMode = le' /etc/bluetooth/main.conf
             fi
         fi
         systemctl stop rekoit-bt-agent.service 2>/dev/null || true
@@ -57,7 +67,7 @@ apply_bt_runtime_config() {
             systemctl restart rekoit-bt-wake-reconnect.service 2>/dev/null || true
         fi
         echo "  OK: bluetooth boot-race fix installed"
-        echo "  OK: BLE privacy disabled (NXP compatibility)"
+        echo "  OK: BLE privacy enabled (device mode)"
         echo "  OK: fast reconnect acceptance enabled"
         echo "  OK: legacy bluetooth agent removed"
         echo "  OK: wake reconnect monitor enabled"

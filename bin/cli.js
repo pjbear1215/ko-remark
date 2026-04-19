@@ -42,11 +42,12 @@ async function findAvailablePort(preferred) {
 }
 
 /**
- * Open the default browser on macOS.
+ * Open the default browser on macOS or Linux.
  * @param {string} url
  */
 function openBrowser(url) {
-  exec(`open "${url}"`, (error) => {
+  const command = process.platform === "darwin" ? "open" : "xdg-open";
+  exec(`${command} "${url}"`, (error) => {
     if (error) {
       console.log(`\nBrowser could not be opened automatically.`);
       console.log(`Please open: ${url}`);

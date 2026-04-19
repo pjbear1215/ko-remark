@@ -11,33 +11,24 @@ interface ProgressBarProps {
 export default function ProgressBar({
   progress,
   status = "active",
-  currentStep,
 }: ProgressBarProps): ReactNode {
   const isComplete = progress >= 100 && status === "complete";
 
-  // 상태별 채움 그라데이션
+  // 상태별 채움 색상 (reMarkable 스타일: 그라데이션 제거, 단색 강조)
   const fillBackground =
     status === "error"
       ? "var(--error)"
       : status === "complete"
-        ? "linear-gradient(90deg, #22c55e 0%, #16a34a 100%)"
-        : "linear-gradient(90deg, #67a6ff 0%, var(--apple-blue) 100%)";
+        ? "var(--accent)" // 성공 시 블랙으로 깔끔하게 마무리
+        : "var(--accent-secondary)"; // 진행 중에는 세련된 블루
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-3">
-        {currentStep && (
-          <span
-            className="text-[16px]"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            {currentStep}
-          </span>
-        )}
+    <div className="w-full">
+      <div className="flex justify-end items-center mb-2">
         <span
-          className="text-[15px] font-mono"
+          className="text-[12px] font-bold font-mono tracking-tight"
           style={{
-            color: "var(--text-muted)",
+            color: status === "error" ? "var(--error)" : "var(--text-muted)",
             fontVariantNumeric: "tabular-nums",
           }}
         >
@@ -46,36 +37,21 @@ export default function ProgressBar({
       </div>
       {/* 진행률 바 트랙 */}
       <div
-        className="h-2 overflow-hidden rounded-full"
+        className="h-1.5 overflow-hidden rounded-full w-full"
         style={{
-          backgroundColor: "rgba(17,24,39,0.08)",
-          boxShadow: "inset 0 1px 2px rgba(15,23,42,0.05)",
+          backgroundColor: "var(--border-light)",
         }}
       >
         {/* 진행률 바 채움 영역 */}
         <div
-          className="h-full rounded-full relative"
+          className="h-full relative transition-all duration-700 ease-out"
           style={{
             width: `${progress}%`,
             background: fillBackground,
-            transition: "width 500ms cubic-bezier(0.4, 0, 0.2, 1)",
-            ...(isComplete
-              ? { animation: "completionPulse 600ms ease-out" }
-              : {}),
+            borderRadius: progress > 98 ? "inherit" : "9999px 0 0 9999px",
           }}
         >
-          {/* 쉬머 오버레이 (active 상태에서만) */}
-          {status === "active" && progress < 100 && progress > 0 && (
-            <div
-              className="absolute inset-0 rounded-full"
-              style={{
-                backgroundImage:
-                  "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)",
-                backgroundSize: "200% 100%",
-                animation: "shimmer 1.5s ease-in-out infinite",
-              }}
-            />
-          )}
+          {/* 쉬머 오버레이 제거 (플랫한 디자인 지향) */}
         </div>
       </div>
     </div>

@@ -63,7 +63,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     results.input_devices = await runSsh(
       ip,
       password,
-      "for dev in /dev/input/event*; do [ -e \"$dev\" ] || continue; name=$(cat \"/sys/class/input/$(basename \"$dev\")/device/name\" 2>/dev/null || echo unknown); echo \"$dev: $name\"; done",
+      "cat /proc/bus/input/devices 2>/dev/null || echo 'NO_PROC_INPUT_DEVICES'",
     );
   } catch {
     results.input_devices = "SSH_ERROR";
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     results.hangul_daemon_logs = await runSsh(
       ip,
       password,
-      "journalctl -u hangul-daemon --no-pager -n 120 2>/dev/null || echo 'NO_LOGS'",
+      "journalctl -u hangul-daemon --no-pager --since '30 minutes ago' -n 300 2>/dev/null || echo 'NO_LOGS'",
     );
   } catch {
     results.hangul_daemon_logs = "SSH_ERROR";
@@ -121,18 +121,8 @@ echo
 echo '=== main.conf flags ==='
 grep -E '^(Privacy|FastConnectable)\\s*=' /etc/bluetooth/main.conf 2>/dev/null || echo 'NO_BT_FLAGS'
 echo
-echo '=== rekoit state ==='
-if [ -f /home/root/rekoit/install-state.conf ]; then
-  grep -E '^(INSTALL_BT|BLUETOOTH_POWER_ON)=' /home/root/rekoit/install-state.conf 2>/dev/null || echo 'NO_STATE_FLAGS'
-else
-  echo 'NO_INSTALL_STATE'
-fi
-echo
 echo '=== paired devices ==='
 PAIRED=$(bluetoothctl devices Paired 2>/dev/null || true)
-if [ -z "$PAIRED" ]; then
-  PAIRED=$(bluetoothctl devices 2>/dev/null || true)
-fi
 if [ -z "$PAIRED" ]; then
   echo 'NO_PAIRED_DEVICES'
 else
@@ -141,12 +131,11 @@ else
   echo '=== paired device details ==='
   printf '%s\n' "$PAIRED" | while read -r _ ADDR NAME; do
     [ -n "$ADDR" ] || continue
-    echo "--- $ADDR \${NAME:-} ---"
-    bluetoothctl info "$ADDR" 2>/dev/null || echo 'NO_INFO'
+    echo "--- \$ADDR \${NAME:-} ---"
+    bluetoothctl info "\$ADDR" 2>/dev/null || echo 'NO_INFO'
     echo
   done
 fi
-echo
 echo '=== bluetooth storage ==='
 find /var/lib/bluetooth -maxdepth 3 \\( -name info -o -name attributes \\) -print 2>/dev/null || echo 'NO_BT_STORAGE'
       `,
@@ -159,7 +148,7 @@ find /var/lib/bluetooth -maxdepth 3 \\( -name info -o -name attributes \\) -prin
     results.bluetooth_logs = await runSsh(
       ip,
       password,
-      "journalctl -u bluetooth --no-pager -n 200 2>/dev/null || echo 'NO_LOGS'",
+      "journalctl -u bluetooth --no-pager --since '30 minutes ago' -n 300 2>/dev/null || echo 'NO_LOGS'",
     );
   } catch {
     results.bluetooth_logs = "SSH_ERROR";
@@ -169,7 +158,7 @@ find /var/lib/bluetooth -maxdepth 3 \\( -name info -o -name attributes \\) -prin
     results.bluetooth_helper_logs = await runSsh(
       ip,
       password,
-      "journalctl -u rekoit-bt-wake-reconnect.service --no-pager -n 120 2>/dev/null || echo 'NO_LOGS'",
+      "journalctl -u rekoit-bt-wake-reconnect.service --no-pager --since '30 minutes ago' -n 300 2>/dev/null || echo 'NO_LOGS'",
     );
   } catch {
     results.bluetooth_helper_logs = "SSH_ERROR";
@@ -179,7 +168,7 @@ find /var/lib/bluetooth -maxdepth 3 \\( -name info -o -name attributes \\) -prin
     results.xochitl_logs = await runSsh(
       ip,
       password,
-      "journalctl -u xochitl --no-pager -n 120 2>/dev/null | grep -i -E 'hangul|keyboard|input|libepaper|folio|event' || echo 'NO_MATCHES'",
+      "journalctl -u xochitl --no-pager --since '30 minutes ago' -n 300 2>/dev/null | grep -i -E 'hangul|keyboard|input|libepaper|folio|event' || echo 'NO_MATCHES'",
     );
   } catch {
     results.xochitl_logs = "SSH_ERROR";

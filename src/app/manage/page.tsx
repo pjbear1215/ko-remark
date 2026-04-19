@@ -74,174 +74,157 @@ export default function ManagePage() {
 
   return (
     <div className="animate-fade-in-up">
-      <div style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
-        <div className="flex items-start justify-between animate-fade-in-up">
-          <div>
-            <h1
-              className="text-[36px] font-bold leading-tight"
-              style={{ color: "var(--text-primary)" }}
-            >
-              기기 관리
-            </h1>
-            <p className="text-[15px]" style={{ color: "var(--text-muted)", marginTop: "8px" }}>
-              다시 설정하지 않고, 현재 기기에서 필요한 항목만 바꿉니다.
-            </p>
+      <div className="space-y-6">
+        <div>
+          <h1
+            className="text-[32px] font-bold tracking-tight"
+            style={{ color: "#000000" }}
+          >
+            기기 관리
+          </h1>
+          <p className="text-[15px] mt-2 font-medium" style={{ color: "#666666" }}>
+            다시 설정하지 않고, 현재 기기에서 필요한 항목만 바꿉니다.
+          </p>
+        </div>
+
+        <div className="stagger-1">
+          <div className="space-y-10">
+            {/* 원상복구 섹션 */}
+              <div className="space-y-4">
+                <SectionDivider label="복구 및 제거" />
+                <div className="grid gap-4">
+                  <div
+                    className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                  >
+                    <div>
+                      <p className="text-[16px] font-bold text-black">전체 원상복구</p>
+                      <p className="text-[13px] font-medium opacity-50 mt-0.5">모든 설치 항목을 제거하고 기기를 순정 상태로 되돌립니다.</p>
+                    </div>
+                    <Button variant="primary" size="sm" onClick={() => router.push("/uninstall")} className="font-bold">
+                      시작
+                    </Button>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {installedState.hangul && (
+                      <div
+                        className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                      >
+                        <div>
+                          <p className="text-[16px] font-bold text-black">한글 입력 엔진 제거</p>
+                          <p className="text-[13px] font-medium opacity-50 mt-0.5">한글 관련 파일만 정리합니다.</p>
+                        </div>
+                        <Button variant="primary" size="sm" onClick={() => router.push("/uninstall?target=hangul")} className="font-bold">
+                          시작
+                        </Button>
+                      </div>
+                    )}
+
+                    {installedState.bt && (
+                      <div
+                        className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                      >
+                        <div>
+                          <p className="text-[16px] font-bold text-black">블루투스 도우미 제거</p>
+                          <p className="text-[13px] font-medium opacity-50 mt-0.5">블루투스 설정만 정리합니다.</p>
+                        </div>
+                        <Button variant="primary" size="sm" onClick={() => router.push("/uninstall?target=bt")} className="font-bold">
+                          시작
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 키보드 설정 */}
+              {installedState.hangul && (
+                <div className="space-y-4">
+                  <SectionDivider label="키보드 레이아웃" />
+                  <KeyboardSwapControl ip={state.ip} password={state.password} />
+                </div>
+              )}
+
+              {/* 블루투스 설정 */}
+              {installedState.bt && (
+                <div className="space-y-4">
+                  <SectionDivider label="블루투스 제어" />
+                  <div
+                    className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                  >
+                    <div>
+                      <p className="text-[16px] font-bold text-black">키보드 재설정</p>
+                      <p className="text-[13px] font-medium opacity-50 mt-0.5">다시 스캔하여 다른 키보드를 연결합니다.</p>
+                    </div>
+                    <Button variant="primary" size="sm" onClick={() => router.push("/bluetooth?mode=manage")} className="font-bold">
+                      설정 열기
+                    </Button>
+                  </div>
+                  <BluetoothPowerControl ip={state.ip} password={state.password} />
+                </div>
+              )}
+
+              {/* 폰트 설정 */}
+              {installedState.hangul && (
+                <div className="space-y-4">
+                  <SectionDivider label="폰트 관리" />
+                  <div
+                    className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                  >
+                    <span className="text-[16px] font-bold text-black">사용자 폰트 업로드</span>
+                    <input
+                      ref={fontInputRef}
+                      type="file"
+                      accept=".otf,.ttf"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setFontUploading(true);
+                        setFontResult(null);
+                        const formData = new FormData();
+                        formData.append("font", file);
+                        formData.append("ip", state.ip);
+                        formData.append("password", state.password);
+                        try {
+                          const res = await fetch("/api/font/upload", { method: "POST", body: formData });
+                          const data = await res.json();
+                          setFontResult(data.success ? data.message : `실패: ${data.error}`);
+                        } catch {
+                          setFontResult("서버 오류");
+                        } finally {
+                          setFontUploading(false);
+                          if (fontInputRef.current) fontInputRef.current.value = "";
+                        }
+                      }}
+                    />
+                    <Button variant="primary" size="sm" onClick={() => fontInputRef.current?.click()} loading={fontUploading} className="font-bold">
+                      파일 선택
+                    </Button>
+                  </div>
+                  {fontResult && (
+                    <p className="text-[13px] font-bold px-1" style={{ color: fontResult.includes("실패") ? "#d93025" : "#1e8e3e" }}>
+                      {fontResult}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* 진단 섹션 */}
+              <DiagnosisPanel
+                ip={state.ip}
+                password={state.password}
+                title="시스템 진단"
+                subtitle="문제 원인 확인 및 상태 점검"
+              />
           </div>
-          <Button variant="ghost" onClick={() => router.push(returnPath)}>
+        </div>
+
+        <div className="flex justify-end pt-8 stagger-2">
+          <Button onClick={() => router.push(returnPath)} size="lg" className="px-16 font-bold" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>}>
             처음으로
           </Button>
         </div>
-
-        <div className="animate-fade-in-up stagger-1" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          <SectionDivider label="원상복구" />
-          <div
-            className="card-interactive flex items-center justify-between"
-            style={{ padding: "20px 24px" }}
-          >
-            <div>
-              <p className="text-[16px] font-medium" style={{ color: "var(--text-primary)" }}>
-                전체 원상복구
-              </p>
-              <p className="text-[14px]" style={{ color: "var(--text-muted)", marginTop: "4px" }}>
-                설치된 항목을 감지한 뒤 원본 상태로 되돌립니다. 한글 폰트도 함께 제거됩니다.
-              </p>
-            </div>
-            <Button variant="secondary" onClick={() => router.push("/uninstall")}>
-              시작
-            </Button>
-          </div>
-        </div>
-
-        {(installedState.hangul || installedState.bt) && (
-          <div className="animate-fade-in-up stagger-2" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <SectionDivider label="부분 제거" />
-            <div className="grid gap-4 md:grid-cols-2">
-              {installedState.hangul && (
-                <div
-                  className="card-interactive flex items-center justify-between"
-                  style={{ padding: "20px 24px" }}
-                >
-                  <div>
-                    <p className="text-[16px] font-medium" style={{ color: "var(--text-primary)" }}>
-                      한글 입력 제거
-                    </p>
-                    <p className="text-[14px]" style={{ color: "var(--text-muted)", marginTop: "4px" }}>
-                      한글 런타임, 폰트, libepaper 백업과 ReKoIt 한글 관련 파일만 제거합니다.
-                    </p>
-                  </div>
-                  <Button variant="secondary" onClick={() => router.push("/uninstall?target=hangul")}>
-                    시작
-                  </Button>
-                </div>
-              )}
-
-              {installedState.bt && (
-                <div
-                  className="card-interactive flex items-center justify-between"
-                  style={{ padding: "20px 24px" }}
-                >
-                  <div>
-                    <p className="text-[16px] font-medium" style={{ color: "var(--text-primary)" }}>
-                      블루투스 제거
-                    </p>
-                    <p className="text-[14px]" style={{ color: "var(--text-muted)", marginTop: "4px" }}>
-                      블루투스 설정, 페어링 데이터, ReKoIt 블루투스 관련 파일만 제거합니다.
-                    </p>
-                  </div>
-                  <Button variant="secondary" onClick={() => router.push("/uninstall?target=bt")}>
-                    시작
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {installedState.hangul && (
-          <div className="animate-fade-in-up stagger-3" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <SectionDivider label="키보드" />
-            <KeyboardSwapControl ip={state.ip} password={state.password} />
-          </div>
-        )}
-
-        {installedState.bt && (
-          <div className="animate-fade-in-up stagger-4" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <SectionDivider label="블루투스" />
-            <div
-              className="card-interactive flex items-center justify-between"
-              style={{ padding: "20px 24px" }}
-            >
-              <div>
-                <p className="text-[16px] font-medium" style={{ color: "var(--text-primary)" }}>
-                  키보드 재설정
-                </p>
-                <p className="text-[14px]" style={{ color: "var(--text-muted)", marginTop: "4px" }}>
-                  다시 스캔하고 다른 블루투스 키보드를 페어링하거나 기존 연결을 바꿉니다.
-                </p>
-              </div>
-              <Button variant="secondary" onClick={() => router.push("/bluetooth?mode=manage")}>
-                열기
-              </Button>
-            </div>
-            <BluetoothPowerControl ip={state.ip} password={state.password} />
-          </div>
-        )}
-
-        {installedState.hangul && (
-          <div className="animate-fade-in-up stagger-5" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <SectionDivider label="폰트 교체" />
-            <input
-              ref={fontInputRef}
-              type="file"
-              accept=".otf,.ttf"
-              className="hidden"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                setFontUploading(true);
-                setFontResult(null);
-                const formData = new FormData();
-                formData.append("font", file);
-                formData.append("ip", state.ip);
-                formData.append("password", state.password);
-                try {
-                  const res = await fetch("/api/font/upload", { method: "POST", body: formData });
-                  const data = await res.json();
-                  setFontResult(data.success ? data.message : `실패: ${data.error}`);
-                } catch {
-                  setFontResult("서버 오류");
-                } finally {
-                  setFontUploading(false);
-                  if (fontInputRef.current) fontInputRef.current.value = "";
-                }
-              }}
-            />
-            <div
-              className="card-interactive flex items-center justify-between"
-              style={{ padding: "20px 24px" }}
-            >
-              <span className="text-[15px] font-medium" style={{ color: "var(--text-muted)" }}>
-                OTF/TTF 파일 업로드
-              </span>
-              <Button variant="secondary" size="sm" onClick={() => fontInputRef.current?.click()} loading={fontUploading}>
-                {fontUploading ? "업로드 중..." : "선택"}
-              </Button>
-            </div>
-            {fontResult && (
-              <p className="text-[14px] animate-fade-in" style={{ color: fontResult.includes("실패") ? "var(--error)" : "var(--success)", paddingLeft: "4px" }}>
-                {fontResult}
-              </p>
-            )}
-          </div>
-        )}
-
-        <DiagnosisPanel
-          ip={state.ip}
-          password={state.password}
-          title="진단"
-          subtitle="문제 원인 확인"
-          className="animate-fade-in-up stagger-6"
-        />
       </div>
     </div>
   );

@@ -9,7 +9,7 @@ import { useSetup } from "./store";
 export function useGuard(): boolean {
   const router = useRouter();
   const pathname = usePathname();
-  const { state } = useSetup();
+  const { state, isLoaded } = useSetup();
 
   const isWelcome = pathname === "/";
   const allowsCredentialOnly =
@@ -23,10 +23,12 @@ export function useGuard(): boolean {
   const hasCredentials = Boolean(state.ip && state.password);
 
   useEffect(() => {
+    if (!isLoaded) return;
     if (isWelcome) return;
     if (allowsCredentialOnly && hasCredentials) return;
     if (!isAllowed) router.replace("/");
-  }, [isWelcome, allowsCredentialOnly, isAllowed, hasCredentials, router]);
+  }, [isLoaded, isWelcome, allowsCredentialOnly, isAllowed, hasCredentials, router]);
 
+  if (!isLoaded) return false;
   return isAllowed || isWelcome || (allowsCredentialOnly && hasCredentials);
 }

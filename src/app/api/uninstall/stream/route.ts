@@ -28,6 +28,10 @@ function runSshOnce(
         "UserKnownHostsFile=/dev/null",
         "-o",
         "ConnectTimeout=30",
+        "-o",
+        "ServerAliveInterval=10",
+        "-o",
+        "ServerAliveCountMax=3",
         `root@${ip}`,
         command,
       ],
@@ -184,6 +188,17 @@ export async function GET(request: NextRequest): Promise<Response> {
 
       try {
         const keyboardScanScript = buildKeyboardBluetoothAddressScanScript().trim();
+        const storedBluetoothAddressScanScript = `
+          {
+            bluetoothctl devices 2>/dev/null || true
+            bluetoothctl devices Paired 2>/dev/null || true
+            bluetoothctl devices Trusted 2>/dev/null || true
+            bluetoothctl devices Connected 2>/dev/null || true
+          } | awk '/^Device [0-9A-F:]+/ {print $2}'
+          find /var/lib/bluetooth -mindepth 2 -maxdepth 2 -type d 2>/dev/null | awk -F/ '
+            /^[0-9A-F:]{17}$/ && $(NF-1) != "cache" {print $NF}
+          '
+        `.trim();
         // === Step 0: 설치 상태 감지 ===
         send("step", { step: 0, name: "설치 상태 감지", status: "running" });
         send("progress", { percent: 5, step: 0 });
@@ -238,28 +253,27 @@ export async function GET(request: NextRequest): Promise<Response> {
         send("step", { step: 1, name: "서비스 중지", status: "running" });
         send("progress", { percent: 15, step: 1 });
 
-        // 모든 hangul 관련 서비스를 중지 + disable + mask
+        // 모든 REKOIT 관련 서비스를 중지 + disable + mask
         // mask는 /dev/null 심링크를 생성하여 daemon-reload 후에도 절대 실행 불가능하게 함
         // overlay 캐시에 서비스 파일이 남아있어도 mask 상태면 systemd가 무시함
         await runSsh(ip, password, `
-          for svc in rekoit-factory-guard hangul-daemon rekoit-restore; do
+          for svc in rekoit-factory-guard hangul-daemon rekoit-restore rekoit-bt-agent rekoit-bt-wake-reconnect; do
             systemctl stop "$svc" 2>/dev/null || true
             systemctl disable "$svc" 2>/dev/null || true
             systemctl mask "$svc" 2>/dev/null || true
           done
-          systemctl stop bluetooth.service 2>/dev/null || true
           killall hangul-daemon 2>/dev/null || true
         `);
-        send("log", { line: "OK: hangul 관련 서비스 전체 중지/비활성화/mask" });
-
-        await runSsh(ip, password, "systemctl stop xochitl 2>/dev/null || true");
-        send("log", { line: "OK: xochitl 중지" });
+        send("log", { line: "OK: REKOIT 서비스 전체 중지/비활성화/mask" });
 
         if (detected.btInstalled || detected.hasKeyboardPairings) {
           const btCleanupResult = await runSsh(ip, password, buildBluetoothKeyboardCleanupScript());
           const removedCountMatch = btCleanupResult.match(/BT_KEYBOARD_REMOVED_COUNT=(\d+)/);
           const removedCount = removedCountMatch ? Number.parseInt(removedCountMatch[1], 10) : 0;
           send("log", { line: `OK: 블루투스 키보드 페어링 정리 (${removedCount}개)` });
+
+          await runSsh(ip, password, "systemctl stop bluetooth.service 2>/dev/null || true");
+          send("log", { line: "OK: bluetooth.service 중지" });
         }
 
         send("step", { step: 1, name: "서비스 중지", status: "complete" });
@@ -492,7 +506,7 @@ STATE_EOF
           fi
           if [ -f /home/root/.bashrc ]; then
             sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-            sed -i '/# ReKoIt auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
+            sed -i '/# REKOIT auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
           fi
           systemctl stop bluetooth.service 2>/dev/null || true
         `);
@@ -539,7 +553,7 @@ STATE_EOF
             umount /mnt/inactive 2>/dev/null || true
           fi
         `);
-        send("log", { line: "OK: 비활성 파티션 ReKoIt 흔적 제거" });
+        send("log", { line: "OK: 비활성 파티션 REKOIT 흔적 제거" });
 
         send("step", { step: 5, name: "비활성 파티션 정리", status: "complete" });
         send("progress", { percent: 85, step: 5 });
@@ -554,7 +568,7 @@ STATE_EOF
             find /home/root/rekoit -type d -empty -delete 2>/dev/null || true
             rm -rf /home/root/rekoit 2>/dev/null || true
           `);
-          send("log", { line: "OK: /home/root/ReKoIt 디렉토리 제거" });
+          send("log", { line: "OK: /home/root/REKOIT 디렉토리 제거" });
         }
 
         // daemon-reload 전에 mask 재확인 — overlay 캐시 서비스가 로드되지 않도록
@@ -564,7 +578,7 @@ STATE_EOF
           done
           systemctl daemon-reload && sync
         `);
-        send("log", { line: "OK: ReKoIt 서비스 mask 재확인 + daemon-reload" });
+        send("log", { line: "OK: REKOIT 서비스 mask 재확인 + daemon-reload" });
 
         send("step", { step: 6, name: "설치 디렉토리 정리", status: "complete" });
         send("progress", { percent: 93, step: 6 });
@@ -574,52 +588,44 @@ STATE_EOF
         send("progress", { percent: 95, step: 7 });
 
         try {
-          // xochitl restart 시 ReKoIt 서비스가 다시 올라오지 않도록 최종 확인
+          // xochitl restart 시 USB 네트워크가 일시적으로 끊기므로, 
+          // 2초 뒤에 백그라운드에서 실행되도록 하여 SSH 세션이 먼저 정상 종료되게 함
           await runSsh(ip, password, `
             for svc in rekoit-factory-guard hangul-daemon rekoit-restore rekoit-bt-agent rekoit-bt-wake-reconnect; do
               systemctl mask "$svc" 2>/dev/null || true
             done
-            sync && systemctl restart xochitl 2>/dev/null || true
+            sync && (sleep 2 && systemctl restart xochitl) &
           `);
-          send("log", { line: "OK: xochitl 재시작" });
-        } catch {
-          // xochitl 재시작 시 USB 네트워크가 끊겨 SSH 연결이 닫힐 수 있음 — 정상
-          send("log", { line: "OK: xochitl 재시작 (연결 끊김 — 정상)" });
+          send("log", { line: "OK: xochitl 재시작 명령 전송 완료 (2초 뒤 실행)" });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          send("log", { line: `WARNING: xochitl 재시작 명령 전송 중 오류 (무시됨): ${msg}` });
         }
 
         send("step", { step: 7, name: "시스템 재시작", status: "complete" });
-        send("progress", { percent: 90, step: 7 });
+        send("progress", { percent: 96, step: 7 });
 
         // === Step 8: 재시작 후 삭제 검증 ===
         send("step", { step: 8, name: "삭제 검증", status: "running" });
-        send("progress", { percent: 92, step: 8 });
+        send("progress", { percent: 97, step: 8 });
 
-        // SSH 재연결 대기 (xochitl 재시작 후 USB 네트워크 복구까지 최대 40초)
+        // SSH 재연결 대기 (xochitl 재시작 후 USB 네트워크 복구까지 최대 20초)
         let verifyOutput = "";
         let verified = false;
-        for (let attempt = 0; attempt < 8; attempt++) {
+        for (let attempt = 0; attempt < 4; attempt++) {
           await new Promise((r) => setTimeout(r, 5000));
           try {
-	            verifyOutput = await runSshOnce(ip, password, `
-	              # 최종 live cleanup: active rootfs의 현재 런타임 뷰를 다시 한 번 강제 정리
-	              ${buildFontRemovalCommands({ deleteFont, ignoreMissing: true, refreshCache: true })}
-	              rm -rf /opt/rekoit 2>/dev/null || true
-	              for svc in rekoit-factory-guard hangul-daemon rekoit-restore rekoit-bt-agent rekoit-bt-wake-reconnect; do
-	                systemctl stop "$svc" 2>/dev/null || true
-	                systemctl disable "$svc" 2>/dev/null || true
-	                systemctl unmask "$svc" 2>/dev/null || true
-	              done
-	              rm -f /etc/systemd/system/hangul-daemon.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/rekoit-restore.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/rekoit-factory-guard.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/rekoit-bt-agent.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/rekoit-bt-wake-reconnect.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/multi-user.target.wants/hangul-daemon.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/multi-user.target.wants/rekoit-restore.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/multi-user.target.wants/rekoit-bt-agent.service 2>/dev/null || true
-	              rm -f /etc/systemd/system/multi-user.target.wants/rekoit-bt-wake-reconnect.service 2>/dev/null || true
-	              systemctl daemon-reload 2>/dev/null || true
+            send("log", { line: "INFO: 삭제 검증 시도 중..." });
+            verifyOutput = await runSshOnce(ip, password, `
+              # 최종 live cleanup: active rootfs의 현재 런타임 뷰를 다시 한 번 강제 정리
+              rm -rf /opt/rekoit 2>/dev/null || true
+              # 서비스 unmask 최종 확인 (xochitl 재시작 시점에 mask되어 있었음)
+              for svc in rekoit-factory-guard hangul-daemon rekoit-restore rekoit-bt-agent rekoit-bt-wake-reconnect; do
+                systemctl stop "$svc" 2>/dev/null || true
+                systemctl disable "$svc" 2>/dev/null || true
+                systemctl unmask "$svc" 2>/dev/null || true
+              done
+              systemctl daemon-reload 2>/dev/null || true
 
               echo "=== VERIFY ==="
 
@@ -669,6 +675,7 @@ STATE_EOF
 
               # /home 파일 확인 (별도 파티션 — overlay 아님)
               [ -d /home/root/rekoit ] && echo "REMAIN:rekoit 디렉토리" || true
+              [ -d /home/root/rekoit/bt-pairing ] && echo "REMAIN:bt-pairing 백업 디렉토리" || true
               if [ -f /home/root/rekoit/install-state.conf ]; then
                 . /home/root/rekoit/install-state.conf
                 [ "\${INSTALL_HANGUL:-1}" = "0" ] || echo "REMAIN:install-state hangul flag"
@@ -678,22 +685,24 @@ STATE_EOF
               [ -f /dev/shm/hangul-libepaper.so ] && echo "REMAIN:libepaper tmpfs 파일" || true
               mount | grep -q ' /usr/lib/plugins/platforms/libepaper.so ' && echo "REMAIN:libepaper runtime mount" || true
 
-              for ADDR in $(
-                ${keyboardScanScript}
-              ); do
-                echo "REMAIN:블루투스 키보드 페어링 데이터 ($ADDR)"
+              # 블루투스 확인 (bluetoothctl 배제 — 서비스 중지 시 hang 위험)
+              find /var/lib/bluetooth -mindepth 2 -maxdepth 2 -type d 2>/dev/null | awk -F/ '
+                /^[0-9A-F:]{17}$/ && $(NF-1) != "cache" {print $NF}
+              ' | while read ADDR; do
+                echo "REMAIN:블루투스 디바이스 상태 ($ADDR)"
               done
 
-	              if [ -n "$DIRECT" ]; then
-	                umount /mnt/verify_rootfs 2>/dev/null || true
-	              fi
+              if [ -n "$DIRECT" ]; then
+                umount /mnt/verify_rootfs 2>/dev/null || true
+              fi
 
               echo "VERIFY_DONE"
             `);
             verified = true;
             break;
-          } catch {
-            send("log", { line: `INFO: SSH 재연결 대기 중... (${attempt + 1}/8)` });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            send("log", { line: `INFO: SSH 재연결 대기 중... (${attempt + 1}/8) - ${msg}` });
           }
         }
 

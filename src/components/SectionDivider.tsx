@@ -12,25 +12,20 @@ export default function SectionDivider({
   return (
     <div style={{ paddingTop: "4px", paddingBottom: "4px" }}>
       <div className="flex items-center gap-3">
-        {/* 좌측 액센트 바 */}
+        {/* 좌측 액센트 바 (블랙) */}
         <div
           className="flex-shrink-0"
           style={{
-            width: "2px",
-            height: "16px",
-            backgroundColor: "var(--apple-blue)",
-            borderRadius: "2px",
+            width: "3px",
+            height: "14px",
+            backgroundColor: "#000000",
           }}
         />
         <span
-          className="text-[12px] font-semibold uppercase tracking-[0.12em] flex-shrink-0"
+          className="text-[12px] font-bold uppercase tracking-[0.15em] flex-shrink-0"
           style={{
-            color: "var(--text-muted)",
-            backgroundColor: "rgba(255,255,255,0.72)",
-            padding: "5px 12px",
-            borderRadius: "var(--radius-full)",
-            border: "1px solid var(--border-light)",
-            letterSpacing: "0.12em",
+            color: "#000000",
+            letterSpacing: "0.15em",
           }}
         >
           {label}
@@ -38,8 +33,8 @@ export default function SectionDivider({
         <div
           className="flex-1"
           style={{
-            height: "1px",
-            background: "linear-gradient(to right, var(--border-light), transparent)",
+            height: "1.5px",
+            backgroundColor: "rgba(0,0,0,0.08)",
           }}
         />
       </div>

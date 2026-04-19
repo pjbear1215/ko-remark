@@ -16,6 +16,7 @@ interface InstallState {
   installBt: boolean;
   swapLeftCtrlCapsLock: boolean;
   btDeviceAddress: string;
+  btDeviceIrk?: string;
   locales: string[];
 }
 
@@ -46,6 +47,7 @@ const FILES_BT: FileMapping[] = [
   { local: "post-update-bt.sh", remote: "post-update-bt.sh" },
   { local: "bt-wake-reconnect.sh", remote: "bt-wake-reconnect.sh" },
   { local: "rekoit-bt-wake-reconnect.service", remote: "rekoit-bt-wake-reconnect.service" },
+  { local: "rekoit-bt-helper/rekoit-bt-helper", remote: "rekoit-bt-helper" },
 ];
 
 // 폰트 다운로드 URL (Google Noto CJK - SIL OFL 라이선스)
@@ -65,6 +67,7 @@ function runSshOnce(ip: string, password: string, command: string): Promise<stri
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "ConnectTimeout=30",
+        "-o", "PubkeyAuthentication=no",
         `root@${ip}`,
         command,
       ],
@@ -136,6 +139,7 @@ function runScpOnce(
         "scp",
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "PubkeyAuthentication=no",
         localPath,
         `root@${ip}:${remotePath}`,
       ],
@@ -165,7 +169,7 @@ function shouldShowInstallLogLine(line: string, state: InstallState): boolean {
   if (!trimmed) return false;
   if (trimmed.startsWith("STATE:")) return false;
   if (trimmed.startsWith("==========================================")) return false;
-  if (trimmed.startsWith("ReKoIt Installer")) return false;
+  if (trimmed.startsWith("REKOIT Installer")) return false;
   if (trimmed.startsWith("Mode:")) return false;
   if (trimmed.startsWith("Restarting services")) return false;
   if (trimmed.startsWith("Components:")) return false;
@@ -268,6 +272,12 @@ async function detectInstalledState(
   const btDeviceAddress = btDeviceAddressLine
     ? btDeviceAddressLine.replace("BT_DEVICE_ADDRESS=", "").trim()
     : "";
+  const btDeviceIrkLine = output
+    .split("\n")
+    .find((line) => line.startsWith("BT_DEVICE_IRK="));
+  const btDeviceIrk = btDeviceIrkLine
+    ? btDeviceIrkLine.replace("BT_DEVICE_IRK=", "").trim()
+    : "";
   const hasHangulRuntime = output.includes("HANGUL_RUNTIME=yes");
   const hasBtRuntime = output.includes("BT_RUNTIME=yes");
 
@@ -276,6 +286,7 @@ async function detectInstalledState(
     installBt: hasBtRuntime,
     swapLeftCtrlCapsLock,
     btDeviceAddress,
+    btDeviceIrk,
     locales,
   };
 }
@@ -357,6 +368,37 @@ async function buildHangulDaemon(
     180000,
   );
   send("log", { line: "OK: hangul-daemon 빌드 완료" });
+}
+
+async function buildBluetoothHelper(
+  resourceDir: string,
+  send: (event: string, data: Record<string, unknown>) => void,
+): Promise<void> {
+  const outputPath = path.join(resourceDir, "rekoit-bt-helper/rekoit-bt-helper");
+  const sourceDir = path.join(resourceDir, "source/rekoit-bt-helper");
+  const sourceFiles = [
+    path.join(sourceDir, "main.go"),
+    path.join(sourceDir, "go.mod"),
+  ];
+
+  if (!shouldRebuildArtifact(outputPath, sourceFiles)) {
+    send("log", { line: "OK: rekoit-bt-helper (이미 빌드됨)" });
+    return;
+  }
+
+  if (!fs.existsSync(path.join(sourceDir, "main.go"))) {
+    throw new Error(`소스 파일 없음: ${sourceDir}/main.go`);
+  }
+
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+  send("log", { line: "Bluetooth Helper Go 크로스 컴파일 중 (GOOS=linux GOARCH=arm64)..." });
+  await runLocal(
+    `GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o "${outputPath}" .`,
+    sourceDir,
+    180000,
+  );
+  send("log", { line: "OK: rekoit-bt-helper 빌드 완료" });
 }
 
 async function downloadFont(
@@ -551,7 +593,7 @@ if [ -f /home/root/.profile ]; then
 fi
 if [ -f /home/root/.bashrc ]; then
     sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-    sed -i '/# ReKoIt auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
+    sed -i '/# REKOIT auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
 fi
 rm -rf /home/root/rekoit 2>/dev/null || true
 systemctl daemon-reload
@@ -560,7 +602,7 @@ systemctl restart xochitl 2>/dev/null || true
 echo ""
 echo "=== 롤백 완료 ==="
 echo "현재 지원하는 설치 항목이 제거되었습니다."
-echo "ReKoIt 디렉토리와 블루투스 페어링 백업까지 제거되었습니다."
+echo "REKOIT 디렉토리와 블루투스 페어링 백업까지 제거되었습니다."
 `;
 
 export async function GET(request: NextRequest): Promise<Response> {
@@ -610,11 +652,16 @@ export async function GET(request: NextRequest): Promise<Response> {
           btDeviceAddress: effectiveInstallBt
             ? requestedState.btDeviceAddress || currentState.btDeviceAddress
             : "",
+          btDeviceIrk: effectiveInstallBt
+            ? (requestedState.btDeviceAddress && requestedState.btDeviceAddress !== currentState.btDeviceAddress)
+              ? ""
+              : currentState.btDeviceIrk
+            : "",
           locales: [],
         };
 
         // === Step 0: 소스에서 바이너리 빌드 ===
-        send("step", { step: 0, name: effectiveState.installHangul ? "소스에서 바이너리 빌드" : "설정 리소스 준비", status: "running" });
+        send("step", { step: 0, name: (effectiveState.installHangul || effectiveState.installBt) ? "소스에서 바이너리 빌드" : "설정 리소스 준비", status: "running" });
         send("progress", { percent: 0, step: 0 });
 
         if (effectiveState.installHangul) {
@@ -622,7 +669,14 @@ export async function GET(request: NextRequest): Promise<Response> {
           send("progress", { percent: 8, step: 0 });
 
           await buildHangulDaemon(projectDir, send);
+          send("progress", { percent: 15, step: 0 });
+        }
+        if (effectiveState.installBt) {
+          await buildBluetoothHelper(projectDir, send);
           send("progress", { percent: 20, step: 0 });
+        }
+
+        if (effectiveState.installHangul || effectiveState.installBt) {
           send("step", { step: 0, name: "소스에서 바이너리 빌드 완료", status: "complete" });
         } else {
           send("progress", { percent: 20, step: 0 });
@@ -671,7 +725,7 @@ export async function GET(request: NextRequest): Promise<Response> {
               await runSsh(
                 ip,
                 password,
-                "systemctl stop hangul-daemon.service 2>/dev/null || true; systemctl stop rekoit-restore.service 2>/dev/null || true; rm -f /home/root/.rekoit-restore-login.sh; if [ -f /home/root/.profile ]; then sed -i '\\|/home/root/.rekoit-restore-login.sh|d' /home/root/.profile 2>/dev/null || true; fi; if [ -f /home/root/.bashrc ]; then sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true; sed -i '/# ReKoIt auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true; fi",
+                "systemctl stop hangul-daemon.service 2>/dev/null || true; systemctl stop rekoit-restore.service 2>/dev/null || true; rm -f /home/root/.rekoit-restore-login.sh; if [ -f /home/root/.profile ]; then sed -i '\\|/home/root/.rekoit-restore-login.sh|d' /home/root/.profile 2>/dev/null || true; fi; if [ -f /home/root/.bashrc ]; then sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true; sed -i '/# REKOIT auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true; fi",
               );
               send("log", { line: "OK: 기존 서비스 중지 및 로그인 restore 정리 완료" });
             } catch {
@@ -774,8 +828,8 @@ export async function GET(request: NextRequest): Promise<Response> {
         send("step", { step: 4, name: "설치 스크립트 실행 완료", status: "complete" });
         send("progress", { percent: 80, step: 4 });
 
-        // === Step 5: ReKoIt 복구 서비스 설치 ===
-        send("step", { step: 5, name: "부팅 시 ReKoIt 복구 서비스 설치", status: "running" });
+        // === Step 5: REKOIT 복구 서비스 설치 ===
+        send("step", { step: 5, name: "부팅 시 REKOIT 복구 서비스 설치", status: "running" });
         send("progress", { percent: 85, step: 5 });
 
         const helperPaths = [
@@ -803,16 +857,16 @@ export async function GET(request: NextRequest): Promise<Response> {
           password,
           "cp /home/root/rekoit/rekoit-restore.service /etc/systemd/system/rekoit-restore.service && systemctl daemon-reload && systemctl enable rekoit-restore.service 2>/dev/null || true",
         );
-        send("log", { line: "OK: ReKoIt 복구 서비스 생성" });
-        send("log", { line: "OK: ReKoIt 복구 서비스 활성화" });
+        send("log", { line: "OK: REKOIT 복구 서비스 생성" });
+        send("log", { line: "OK: REKOIT 복구 서비스 활성화" });
 
         await runSsh(
           ip,
           password,
-          `ROOTFS_DEV=$(mount | grep ' / ' | head -n1 | awk '{print $1}') && mkdir -p /mnt/rootfs && mount -o rw "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null && mkdir -p /mnt/rootfs/etc/systemd/system/multi-user.target.wants && cp /etc/systemd/system/rekoit-restore.service /mnt/rootfs/etc/systemd/system/rekoit-restore.service && ln -sf /etc/systemd/system/rekoit-restore.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/rekoit-restore.service && sync && umount /mnt/rootfs 2>/dev/null || true`,
+          `CURRENT_ROOT=$(mount | grep ' / ' | head -n1 | awk '{print $1}') && ROOTFS_DEV="" && case "$CURRENT_ROOT" in /dev/mmcblk0p2) ROOTFS_DEV="/dev/mmcblk0p3" ;; /dev/mmcblk0p3) ROOTFS_DEV="/dev/mmcblk0p2" ;; esac && if [ -n "$ROOTFS_DEV" ]; then mkdir -p /mnt/rootfs && umount /mnt/rootfs 2>/dev/null || true && mount -o rw "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null && mkdir -p /mnt/rootfs/etc/systemd/system/multi-user.target.wants && cp /etc/systemd/system/rekoit-restore.service /mnt/rootfs/etc/systemd/system/rekoit-restore.service && ln -sf /etc/systemd/system/rekoit-restore.service /mnt/rootfs/etc/systemd/system/multi-user.target.wants/rekoit-restore.service && sync && umount /mnt/rootfs 2>/dev/null || true; fi`,
         );
-        send("log", { line: "OK: ReKoIt 복구 서비스 -> rootfs (reboot-safe)" });
-        send("step", { step: 5, name: "부팅 시 ReKoIt 복구 서비스 설치 완료", status: "complete" });
+        send("log", { line: "OK: REKOIT 복구 서비스 -> rootfs (reboot-safe)" });
+        send("step", { step: 5, name: "부팅 시 REKOIT 복구 서비스 설치 완료", status: "complete" });
 
         send("progress", { percent: 100, step: 5 });
         send("complete", { success: true });

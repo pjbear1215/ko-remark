@@ -2,7 +2,7 @@
 
 reMarkable Paper Pro / Paper Pro Move에서 Type Folio와 블루투스 키보드로 한글을 입력할 수 있게 해주는 웹 기반 설치 도구입니다.
 
-이 앱은 Mac에서 로컬 웹 서버를 띄운 뒤, USB로 연결된 기기에 SSH로 접속해서 설치를 진행합니다. 설치는 브라우저에서 단계별로 진행되며, Type Folio와 블루투스 키보드용 한글 입력을 설정하거나 전체 원상복구를 실행할 수 있습니다.
+이 앱은 macOS, Linux, WSL에서 로컬 웹 서버를 띄운 뒤, USB로 연결된 기기에 SSH로 접속해서 설치를 진행합니다. 설치는 브라우저에서 단계별로 진행되며, Type Folio와 블루투스 키보드용 한글 입력을 설정하거나 전체 원상복구를 실행할 수 있습니다.
 
 ## 지원 기기
 
@@ -47,10 +47,9 @@ reMarkable Paper Pro / Paper Pro Move에서 Type Folio와 블루투스 키보드
 
 처음 사용하는 사람 기준으로 필요한 것은 아래와 같습니다.
 
-### Mac 쪽
-- macOS
+### 호스트 PC 쪽
+- macOS / Linux / WSL
 - Node.js 18 이상
-- Homebrew
 - 인터넷 연결
 - USB-C 케이블
 
@@ -60,6 +59,23 @@ reMarkable Paper Pro / Paper Pro Move에서 Type Folio와 블루투스 키보드
 - 개발자 모드 활성화
 - 잠금 화면 비밀번호 해제
 - 현재 SSH 비밀번호 확인
+
+## 1.5 환경별 빠른 가이드
+
+### macOS
+- 가장 매끄럽게 동작하는 기본 지원 환경입니다.
+- `Homebrew`가 있으면 웹앱의 `사전 준비` 단계에서 필요한 도구를 자동 설치할 수 있습니다.
+- 브라우저 자동 열기와 도구 자동 설치까지 한 흐름으로 진행하는 것을 기준으로 맞춰져 있습니다.
+
+### Linux
+- 지원되는 패키지 매니저가 있으면 같은 흐름으로 사용할 수 있습니다.
+- 비대화형 `sudo`가 가능한 환경이면 웹앱에서 자동 설치를 시도할 수 있습니다.
+- 그렇지 않으면 `사전 준비` 단계에서 수동 설치 명령을 복사해 직접 실행한 뒤 다시 확인하면 됩니다.
+
+### WSL
+- 기본 흐름은 Linux와 같지만, 도구 설치는 WSL 안에서 진행해야 합니다.
+- 브라우저는 가능하면 Windows 쪽으로 자동 열고, 안 되면 `http://localhost:3000` 을 직접 열면 됩니다.
+- 패키지 설치 권한이 제한된 WSL 환경에서는 웹앱이 수동 설치 명령을 안내합니다.
 
 ## 2. 기기에서 먼저 해야 할 일
 
@@ -79,9 +95,9 @@ reMarkable Paper Pro / Paper Pro Move에서 Type Folio와 블루투스 키보드
 이 비밀번호는 팩토리리셋 후 바뀔 수 있습니다. 리셋 후에는 항상 다시 확인하세요.
 
 ### USB 연결
-Mac과 reMarkable을 USB로 연결합니다. 기본 USB 네트워크 주소는 보통 `10.11.99.1` 입니다.
+호스트 PC와 reMarkable을 USB로 연결합니다. 기본 USB 네트워크 주소는 보통 `10.11.99.1` 입니다.
 
-## 3. Mac에 필요한 것 설치
+## 3. 호스트 PC에 필요한 것 설치
 
 ### Node.js 설치
 아직 없다면 먼저 설치합니다.
@@ -95,15 +111,26 @@ node -v
 npm -v
 ```
 
-### Homebrew 설치
-아직 없다면 설치합니다.
+### 패키지 매니저 확인
+자동 설치를 쓰려면 호스트 OS에 맞는 패키지 매니저가 필요합니다.
 
-- 공식 사이트: `https://brew.sh/`
+- macOS: `Homebrew`
+- Linux / WSL: `apt`, `dnf`, `pacman`, `zypper`, `apk` 중 하나
 
-설치 후 확인:
+예시:
 
 ```bash
 brew --version
+```
+
+Linux / WSL 예시:
+
+```bash
+apt-get --version
+dnf --version
+pacman --version
+zypper --version
+apk --version
 ```
 
 ### 필수 도구
@@ -116,18 +143,49 @@ brew --version
 - `go`
 - `zig`
 
-보통 `ssh`와 `scp`는 macOS에 기본 포함되어 있습니다. 나머지는 Homebrew로 설치할 수 있습니다.
+보통 `ssh`와 `scp`는 macOS나 Linux 환경에 이미 포함되어 있습니다. 나머지 도구는 패키지 매니저로 설치할 수 있습니다.
 
 수동 설치 예시:
 
 ```bash
+# macOS
 brew install hudochenkov/sshpass/sshpass
 brew install zstd
 brew install go
 brew install zig
+
+# Debian / Ubuntu / WSL
+sudo apt-get update
+sudo apt-get install -y openssh-client sshpass zstd golang-go
+sudo snap install zig --classic --beta
 ```
 
-처음 실행한 뒤 웹앱의 `사전 준비` 단계에서도 설치 상태를 확인할 수 있습니다.
+Ubuntu/WSL에서는 `zig` 패키지가 `apt`에 없고, `snap`도 stable 채널에 없을 수 있습니다. 이 경우에는 먼저 아래처럼 시도하세요.
+
+```bash
+sudo snap install zig --classic --beta
+```
+
+그래도 어렵다면 `ziglang.org`의 공식 바이너리를 직접 내려받아 PATH에 추가하는 방법을 사용해야 합니다.
+
+처음 실행한 뒤 웹앱의 `사전 준비` 단계에서도 설치 상태를 확인할 수 있고, 자동 설치가 어려운 환경에서는 실행해야 할 명령을 그대로 보여줍니다.
+
+### 환경별 사전 준비 단계 동작
+
+#### macOS
+- `Homebrew`가 없으면 설치가 필요하다고 안내합니다.
+- `Homebrew`가 있으면 웹앱에서 필요한 도구 설치를 바로 진행할 수 있습니다.
+
+#### Linux
+- 지원되는 패키지 매니저를 찾으면 그 기준으로 자동 설치 가능 여부를 판단합니다.
+- `sudo -n` 이 가능한 환경이면 자동 설치를 시도합니다.
+- 관리자 권한 확인이 되지 않으면 수동 설치 명령을 보여줍니다.
+
+#### WSL
+- Linux와 같은 기준으로 패키지 매니저와 권한을 확인합니다.
+- 도구는 반드시 WSL 내부에 설치되어 있어야 합니다.
+- Windows에만 도구가 있고 WSL에 없으면 웹앱에서는 설치되지 않은 것으로 표시됩니다.
+- WSL 환경에 `snapd`가 없다면 `zig`는 별도로 수동 설치해야 할 수 있습니다.
 
 ## 4. 웹앱 실행
 
@@ -152,6 +210,20 @@ npm run dev
 
 포트가 이미 사용 중이면 다른 프로세스를 끄고 다시 실행해야 합니다.
 
+### 환경별 실행 팁
+
+#### macOS
+- `npm run dev` 실행 후 브라우저가 자동으로 열리는 흐름을 기본으로 가정합니다.
+
+#### Linux
+- `xdg-open` 이 있으면 브라우저를 자동으로 열려고 시도합니다.
+- 자동으로 열리지 않으면 `http://localhost:3000` 을 직접 입력하세요.
+
+#### WSL
+- 가능하면 Windows 기본 브라우저로 열려고 시도합니다.
+- 자동으로 열리지 않으면 Windows 브라우저에서 `http://localhost:3000` 을 직접 입력하세요.
+- 포트 접근이 막히는 환경이라면 WSL 네트워크 설정을 먼저 확인해야 합니다.
+
 ## 5. 웹앱에서 실제 설치 순서
 
 처음 사용자라면 아래 순서대로 진행하면 됩니다.
@@ -164,8 +236,8 @@ npm run dev
 ### 2단계. 사전 준비
 웹앱이 필수 도구 설치 여부를 확인합니다.
 
-- Homebrew가 없으면 먼저 설치
-- `sshpass`, `zstd`, `go`, `zig`가 없으면 설치
+- 패키지 매니저와 필수 도구 상태를 확인
+- 자동 설치가 어렵다면 실행해야 할 명령을 그대로 안내
 
 ### 3단계. 기기 확인
 - SSH 접속이 되는지 확인
@@ -227,10 +299,10 @@ npm run dev
 
 ### 전체삭제에서 하는 일
 - 기존 설치 상태 정리
-- `/home/root/bt-keyboard` 제거
-- `/opt/bt-keyboard` 제거
+- `/home/root/rekoit` 제거
+- `/opt/rekoit` 제거
 - BT 페어링 데이터 제거
-- hook / 서비스 / swupdate 관련 파일 제거
+- 서비스 / swupdate / 복구 관련 파일 제거
 
 ### 폰트 처리
 현재 `전체 원상복구`는 한글 폰트도 함께 삭제합니다.
@@ -250,7 +322,7 @@ npm run dev
 
 - 기존 설치 상태 정리
 - 블루투스 한글 구성 제거
-- hook / 서비스 / 페어링 데이터 제거
+- 런타임 서비스 / 페어링 데이터 제거
 - 한글 폰트도 일반적으로 제거됨
 - SSH 비밀번호가 새로 생성될 수 있음
 
@@ -268,13 +340,13 @@ npm run dev
 
 - 기존 설치 상태 정리
 - 블루투스 한글 구성 제거
-- hook / 서비스 / 페어링 데이터 제거
+- 런타임 서비스 / 페어링 데이터 제거
 - SSH 비밀번호 재생성 가능
 
 팩토리리셋 후 다시 접속하려면 SSH 비밀번호를 다시 확인하세요.
 
 ### 펌웨어 업데이트
-설치 시 SWUpdate hook와 restore 경로를 준비합니다.
+설치 시 SWUpdate post-update 경로와 restore 경로를 준비합니다.
 
 다만 실제 서버에서 어떤 업데이트가 기기에 할당되었는지는 reMarkable 쪽 배포 상태에 따라 달라집니다. 업데이트 후 한글 입력이 정상인지 다시 검증하는 것을 권장합니다.
 
@@ -292,13 +364,50 @@ npm run dev
 ### `sshpass`를 찾을 수 없음
 
 ```bash
+# macOS
 brew install hudochenkov/sshpass/sshpass
+
+# Debian / Ubuntu / WSL
+sudo apt-get update && sudo apt-get install -y sshpass
+
+# Fedora
+sudo dnf install -y sshpass
+
+# Arch
+sudo pacman -Sy --noconfirm sshpass
 ```
 
 ### `zstd`를 찾을 수 없음
 
 ```bash
+# macOS
 brew install zstd
+
+# Debian / Ubuntu / WSL
+sudo apt-get update && sudo apt-get install -y zstd
+
+# Fedora
+sudo dnf install -y zstd
+
+# Arch
+sudo pacman -Sy --noconfirm zstd
+```
+
+### `go` 또는 `zig`를 찾을 수 없음
+
+```bash
+# macOS
+brew install go zig
+
+# Debian / Ubuntu / WSL
+sudo apt-get update && sudo apt-get install -y golang-go
+sudo snap install zig --classic --beta
+
+# Fedora
+sudo dnf install -y golang zig
+
+# Arch
+sudo pacman -Sy --noconfirm go zig
 ```
 
 ### SSH 연결 실패

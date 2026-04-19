@@ -17,6 +17,10 @@ export function shouldUseSecureSessionCookie(hostname: string): boolean {
 }
 
 export function createSshSession(ip: string, password: string): string {
+  if (!/^[0-9.]+$/.test(ip)) {
+    throw new Error("Invalid IP address format");
+  }
+
   const payload: SshSession = {
     ip,
     password,

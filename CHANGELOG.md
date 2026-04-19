@@ -2,13 +2,10 @@
 
 All notable changes to this web installer should be documented in this file.
 
-## 0.0.1
+## 0.0.2
 
-- Restored the step-by-step installer flow and refined the UI styling.
-- Added keyboard layout selection as a required step for on-screen keypad installs.
-- Fixed locale persistence so selected layouts do not collapse to Korean and English only.
-- Improved Bluetooth scan and pairing flow for random-address BLE keyboards.
-- Added cleanup of Bluetooth pairing data during full uninstall.
-- Fixed uninstall so font preservation is respected when the user chooses to keep the font.
-- Improved firmware-update recovery flow by restoring before `xochitl` starts and by stopping `xochitl` before repatching when needed.
-- Added GitHub bundle preparation script for publishing a webapp-only source bundle.
+- Improved Bluetooth reconnection logic for multi-pairing keyboards (e.g., HHKB).
+- Added automatic re-pairing (active repair) when 'evdevkeyboard' input loss is detected.
+- Reduced wake trigger cooldown to 10s for better responsiveness during device switching.
+- Optimized monitor loop by caching discovery state to reduce CPU load.
+- Added 'trust' reinforcement to the passive reconnection flow.

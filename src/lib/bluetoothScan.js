@@ -20,7 +20,9 @@ export function isDisplayableBluetoothDeviceName(name) {
 
 export function extractDiscoveredDevice(line) {
   const stripped = sanitizeBluetoothLine(line);
-  const newMatch = stripped.match(/\[NEW\]\s+Device\s+([0-9A-F:]+)\s+(.+)$/i);
+  
+  // Pattern 1: [NEW] Device AA:BB:CC:DD:EE:FF Name
+  const newMatch = stripped.match(/\[NEW\]\s+Device\s+([0-9A-F:]{17})\s+(.+)$/i);
   if (newMatch) {
     const name = newMatch[2].trim();
     if (!isDisplayableBluetoothDeviceName(name)) {
@@ -32,8 +34,9 @@ export function extractDiscoveredDevice(line) {
     };
   }
 
+  // Pattern 2: [CHG] Device AA:BB:CC:DD:EE:FF Name: NewName
   const changedNameMatch = stripped.match(
-    /\[CHG\]\s+Device\s+([0-9A-F:]+)\s+(?:Name|Alias):\s+(.+)$/i,
+    /\[CHG\]\s+Device\s+([0-9A-F:]{17})\s+(?:Name|Alias):\s+(.+)$/i,
   );
   if (changedNameMatch) {
     const name = changedNameMatch[2].trim();

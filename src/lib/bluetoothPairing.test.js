@@ -103,6 +103,7 @@ test("buildBluetoothPairSessionScript runs bluetoothctl via fifo and pairs the s
   const script = buildBluetoothPairSessionScript({
     address: "D6:A6:54:68:75:8C",
     name: "Keys-To-Go 2",
+    scanTimeout: 6,
   });
 
   assert.match(script, /mkfifo/);

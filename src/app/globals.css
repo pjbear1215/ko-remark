@@ -1,54 +1,44 @@
 @import "tailwindcss";
 
 :root {
-  --bg-primary: #f7f3ed;
-  --bg-secondary: #f1ebe3;
-  --bg-card: rgba(255, 255, 255, 0.82);
-  --bg-sidebar: #e8dfd5;
-  --text-primary: #171717;
-  --text-secondary: #36322f;
-  --text-muted: #7e786f;
-  --border: rgba(170, 159, 146, 0.48);
-  --border-light: rgba(212, 205, 196, 0.58);
-  --accent: #111827;
-  --accent-hover: #030712;
-  --accent-light: rgba(245, 241, 236, 0.9);
-  --accent-secondary: #5b82f6;
-  --accent-secondary-soft: rgba(91, 130, 246, 0.14);
-  --glass: rgba(255, 255, 255, 0.74);
-  --glass-strong: rgba(255, 255, 255, 0.9);
-  --apple-blue: #0a84ff;
-  --apple-blue-soft: rgba(10, 132, 255, 0.14);
-  --success: #16a34a;
-  --success-light: #f0fdf4;
-  --error: #dc2626;
-  --error-light: #fef2f2;
-  --warning: #d97706;
-  --warning-light: #fffbeb;
-  --terminal-bg: #1a1a2e;
-  --terminal-bg-end: #16213e;
-  --terminal-text: #e2e8f0;
-  --radius: 14px;
-  --radius-sm: 10px;
-  --radius-lg: 20px;
-  --radius-full: 9999px;
-  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.03);
-  --shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.03);
-  --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.06), 0 2px 8px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 18px 44px rgba(15, 23, 42, 0.08), 0 4px 12px rgba(15, 23, 42, 0.05);
-  --shadow-xl: 0 30px 60px rgba(15, 23, 42, 0.1), 0 8px 16px rgba(15, 23, 42, 0.06);
-  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-spring: 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
-  --gradient-subtle: linear-gradient(135deg, rgba(255,255,255,0.45) 0%, rgba(240,235,228,0.3) 100%);
-  --gradient-warm: radial-gradient(circle at top left, rgba(255,255,255,0.58), transparent 32%), linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+  --bg-primary: #ffffff; /* 순백색 배경 */
+  --bg-secondary: #f6f6f6; /* 밝은 회색 섹션 */
+  --bg-card: #ffffff;
+  --bg-sidebar: #fbfbfd;
+  --text-primary: #000000; /* 완전한 블랙 */
+  --text-secondary: #333333;
+  --text-muted: #666666;
+  --border: #000000; /* 고대비 테두리 */
+  --border-light: #e0e0e0;
+  --accent: #000000; /* 버튼은 기본적으로 블랙 */
+  --accent-hover: #333333;
+  --accent-light: rgba(0, 0, 0, 0.04);
+  --accent-secondary: #000000;
+  --accent-secondary-soft: rgba(0, 0, 0, 0.04);
+  --success: #1a1a1a; /* 성공 시에도 블랙 톤을 유지하되 텍스트로 변화를 줌 */
+  --success-light: #f6f6f6;
+  --error: #000000; /* 에러조차 블랙으로 표현하되 스타일로 구분 (reMarkable 스타일) */
+  --error-light: #fff5f5;
+  --warning: #000000;
+  --warning-light: #fff9f5;
+  --terminal-bg: #000000;
+  --terminal-bg-end: #000000;
+  --terminal-text: #ffffff;
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-lg: 0px;
+  --radius-full: 0px;
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --transition-fast: 100ms ease-out;
+  --transition-base: 200ms ease-out;
 }
 
 * {
   box-sizing: border-box;
-  padding: 0;
-  margin: 0;
 }
 
 html, body {
@@ -272,96 +262,87 @@ input:focus {
 /* --- Component Classes --- */
 
 .btn-primary {
-  background: linear-gradient(180deg, #1f7cff 0%, #0a84ff 100%);
-  border: 1px solid rgba(10, 132, 255, 0.3);
-  box-shadow: 0 8px 18px rgba(10, 132, 255, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  background-color: var(--accent);
+  color: #ffffff;
+  border: 1px solid var(--accent);
 }
 .btn-primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, #1874f3 0%, #0678eb 100%);
-  box-shadow: 0 10px 22px rgba(10, 132, 255, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 .btn-primary:active:not(:disabled) {
-  background: linear-gradient(180deg, #0f6bdc 0%, #005ec7 100%);
-  box-shadow: 0 4px 12px rgba(10, 132, 255, 0.18), inset 0 2px 6px rgba(0, 0, 0, 0.08);
+  transform: scale(0.98);
 }
 
 .input-enhanced {
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-.input-enhanced:hover:not(:focus) {
-  border-color: var(--border) !important;
-  box-shadow: var(--shadow-xs);
+  background-color: #ffffff;
+  border: 1px solid var(--border);
 }
 
 /* --- Card Classes --- */
 
 .card-interactive {
-  background: linear-gradient(180deg, var(--glass-strong) 0%, rgba(255,255,255,0.72) 100%);
+  background-color: var(--bg-card);
   border: 1px solid var(--border-light);
-  border-radius: 20px;
+  border-radius: 0px;
   box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  transition: box-shadow var(--transition-base), transform var(--transition-base), border-color var(--transition-base);
+  padding: 8px 12px; /* 더 축소 */
+  transition: all var(--transition-base);
 }
 .card-interactive:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
-  border-color: rgba(10, 132, 255, 0.22);
-}
-
-.card-static {
-  background: linear-gradient(180deg, var(--glass) 0%, rgba(255,255,255,0.66) 100%);
-  border: 1px solid var(--border-light);
-  border-radius: 20px;
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  border-color: var(--border);
+  transform: translateY(-1px);
 }
 
 .operator-hero {
-  position: relative;
-  overflow: hidden;
-  border-radius: 30px;
-  padding: 36px 40px;
-  background:
-    radial-gradient(circle at top right, rgba(10, 132, 255, 0.12), transparent 30%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(255, 255, 255, 0.72) 100%);
-  border: 1px solid rgba(212, 205, 196, 0.72);
-  box-shadow: var(--shadow-lg);
+  background-color: #ffffff;
+  border: 1px solid var(--border-light);
+  padding: 16px;
 }
 
 .operator-card {
-  background-color: rgba(255, 255, 255, 0.84);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(212, 205, 196, 0.74);
-  border-radius: 24px;
-  box-shadow: var(--shadow-md);
-  padding: 28px;
+  background-color: #ffffff;
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-xs);
+  padding: 12px; /* 모바일 12px로 축소 */
+  transition: padding var(--transition-base), box-shadow var(--transition-base);
 }
 
+@media (min-width: 768px) {
+  .operator-hero {
+    padding: 20px 24px;
+  }
+  .operator-card {
+    padding: 14px 16px; /* 데스크톱 14-16px로 대폭 축소 */
+  }
+  .operator-card.p-large {
+    padding: 20px 24px; /* 대형 여백도 축소 */
+  }
+}
+
+
 .operator-card-strong {
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.88) 100%);
+  background-color: #ffffff;
+  border: 1px solid var(--border);
 }
 
 .operator-card-muted {
-  background:
-    linear-gradient(180deg, rgba(248,245,240,0.82) 0%, rgba(240,235,228,0.72) 100%);
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-light);
 }
 
 .operator-label {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .operator-field-label {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   color: var(--text-muted);
   font-size: 13px;
   font-weight: 600;
@@ -369,12 +350,12 @@ input:focus {
 
 .operator-input {
   width: 100%;
-  padding: 15px 18px;
-  border-radius: 18px;
+  padding: 12px 14px;
+  border-radius: 0px;
   border: 1px solid rgba(212, 205, 196, 0.72);
   background: rgba(255,255,255,0.86);
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: 15px;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
@@ -396,9 +377,9 @@ input:focus {
 /* --- App Container --- */
 
 .app-container {
-  max-width: 1220px;
+  max-width: 1100px;
   margin: 0 auto;
-  padding: 48px 40px 96px;
+  padding: 24px 20px 48px; /* 바깥 여백 절반으로 축소 */
 }
 
 /* --- Skeleton Loading --- */
@@ -422,25 +403,15 @@ input:focus {
 
 @media (max-width: 640px) {
   html, body {
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .app-container {
-    padding: 24px 16px 64px;
-  }
-
-  .operator-hero {
-    padding: 28px 22px;
-    border-radius: 22px;
-  }
-
-  .operator-card {
-    padding: 22px 18px;
-    border-radius: 20px;
+    padding: 16px 12px 32px; /* 모바일 바깥 여백 축소 */
   }
 
   .app-container header {
-    margin-bottom: 32px;
+    margin-bottom: 24px;
   }
 }
 

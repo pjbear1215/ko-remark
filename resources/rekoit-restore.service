@@ -1,5 +1,5 @@
 [Unit]
-Description=Restore ReKoIt runtime after firmware update
+Description=Restore REKOIT runtime after firmware update
 After=home.mount
 Wants=home.mount
 Before=xochitl.service

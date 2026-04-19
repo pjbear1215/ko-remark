@@ -28,7 +28,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "dev": "(sleep 2 && open http://localhost:3000) & next dev --turbopack",
+    "dev": "node scripts/open-localhost.js http://localhost:3000 2000 & next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "fzstd": "^0.1.1",
-    "next": "16.1.6",
+    "next": "^16.2.3",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },

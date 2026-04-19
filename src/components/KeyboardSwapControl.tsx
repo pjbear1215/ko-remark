@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 import Button from "@/components/Button";
+import TerminalOutput from "@/components/TerminalOutput";
 import { useSetup } from "@/lib/store";
 
 interface KeyboardSwapControlProps {
@@ -17,65 +18,58 @@ export default function KeyboardSwapControl({
   const { state, setState: setSetupState } = useSetup();
   const [loading, setLoading] = useState(false);
   const [savingAction, setSavingAction] = useState<"on" | "off" | null>(null);
-  const [result, setResult] = useState<string | null>(null);
   const [swapLeftCtrlCapsLock, setSwapLeftCtrlCapsLock] = useState(state.swapLeftCtrlCapsLock);
+  const [logs, setLogs] = useState<string[]>([]);
+
+  const addLog = useCallback((message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs((prev) => [...prev, `[${timestamp}] ${message}`]);
+  }, []);
 
   useEffect(() => {
     setSwapLeftCtrlCapsLock(state.swapLeftCtrlCapsLock);
   }, [state.swapLeftCtrlCapsLock]);
 
-  useEffect(() => {
-    if (!ip || !password) {
-      return;
-    }
+  const loadKeyboardSettings = useCallback(async (options?: { silent?: boolean }) => {
+    if (!ip || !password) return;
 
-    let cancelled = false;
+    setLoading(true);
+    const silent = options?.silent ?? false;
+    if (!silent) addLog("키보드 설정 읽는 중...");
 
-    const loadKeyboardSettings = async () => {
-      setLoading(true);
-      setResult(null);
-      try {
-        const res = await fetch("/api/manage/keyboard-settings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ip,
-            password,
-            action: "get",
-          }),
-        });
-        const data = await res.json();
-        if (cancelled) {
-          return;
-        }
-        if (data.success) {
-          const nextValue = Boolean(data.swapLeftCtrlCapsLock);
-          setSwapLeftCtrlCapsLock(nextValue);
-          setSetupState({ swapLeftCtrlCapsLock: nextValue });
-        } else {
-          setResult(`설정 읽기 실패: ${data.error ?? "알 수 없는 오류"}`);
-        }
-      } catch {
-        if (!cancelled) {
-          setResult("설정 읽기 실패: 서버 오류");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+    try {
+      const res = await fetch("/api/manage/keyboard-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ip,
+          password,
+          action: "get",
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const nextValue = Boolean(data.swapLeftCtrlCapsLock);
+        setSwapLeftCtrlCapsLock(nextValue);
+        setSetupState({ swapLeftCtrlCapsLock: nextValue });
+        if (!silent) addLog(`설정 확인 완료: 현재 ${nextValue ? "켜짐" : "꺼짐"}`);
+      } else {
+        if (!silent) addLog(`ERROR: 설정 읽기 실패: ${data.error ?? "알 수 없는 오류"}`);
       }
-    };
+    } catch (e) {
+      if (!silent) addLog(`ERROR: 서버 오류: ${e instanceof Error ? e.message : "알 수 없음"}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [ip, password, setSetupState, addLog]);
 
+  useEffect(() => {
     void loadKeyboardSettings();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [ip, password]);
+  }, [loadKeyboardSettings]);
 
   const applySwapSetting = async (nextValue: boolean) => {
     setSavingAction(nextValue ? "on" : "off");
-    setResult(null);
+    addLog(`키보드 레이아웃 변경 시도 (${nextValue ? "켜기" : "끄기"})...`);
     try {
       const res = await fetch("/api/manage/keyboard-settings", {
         method: "POST",
@@ -91,81 +85,77 @@ export default function KeyboardSwapControl({
       if (data.success) {
         setSwapLeftCtrlCapsLock(nextValue);
         setSetupState({ swapLeftCtrlCapsLock: nextValue });
-        setResult(
-          data.restarted
-            ? nextValue
-              ? "활성화됨. hangul-daemon을 다시 시작했습니다."
-              : "비활성화됨. hangul-daemon을 다시 시작했습니다."
-            : nextValue
-              ? "활성화됨. 다음 hangul-daemon 시작부터 적용됩니다."
-              : "비활성화됨. 다음 hangul-daemon 시작부터 적용됩니다.",
-        );
+        const msg = data.restarted
+          ? `OK: ${nextValue ? "활성화" : "비활성화"}됨 (데몬 재시작 완료)`
+          : `OK: ${nextValue ? "활성화" : "비활성화"}됨 (다음 시작부터 적용)`;
+        addLog(msg);
       } else {
-        setResult(`실패: ${data.error ?? "알 수 없는 오류"}`);
+        addLog(`FAIL: 설정 변경 실패: ${data.error ?? "알 수 없는 오류"}`);
       }
-    } catch {
-      setResult("실패: 서버 오류");
+    } catch (e) {
+      addLog(`ERROR: 서버 오류: ${e instanceof Error ? e.message : "알 수 없음"}`);
     } finally {
       setSavingAction(null);
     }
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+    <div className="space-y-3">
       <div
-        className="card-interactive flex items-center justify-between"
-        style={{ padding: "20px 24px" }}
+        className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
       >
         <div>
-          <p className="text-[16px] font-medium" style={{ color: "var(--text-primary)" }}>
+          <p className="text-[16px] font-bold text-black">
             왼쪽 CapsLock과 왼쪽 Ctrl 위치 바꾸기
           </p>
-          <p className="text-[14px]" style={{ color: "var(--text-muted)", marginTop: "4px" }}>
+          <p className="text-[13px] font-medium opacity-50 mt-0.5">
             켜면 왼쪽 CapsLock은 Ctrl처럼, 왼쪽 Ctrl은 CapsLock처럼 동작합니다.
           </p>
         </div>
         <div className="flex gap-3">
           <Button
-            variant={swapLeftCtrlCapsLock ? "secondary" : "ghost"}
+            variant={swapLeftCtrlCapsLock ? "primary" : "ghost"}
             size="sm"
             onClick={() => applySwapSetting(true)}
             loading={savingAction === "on"}
             disabled={loading || savingAction !== null}
             aria-pressed={swapLeftCtrlCapsLock}
+            className="font-bold"
           >
             켜기
           </Button>
           <Button
-            variant={swapLeftCtrlCapsLock ? "ghost" : "secondary"}
+            variant={swapLeftCtrlCapsLock ? "ghost" : "primary"}
             size="sm"
             onClick={() => applySwapSetting(false)}
             loading={savingAction === "off"}
             disabled={loading || savingAction !== null}
             aria-pressed={!swapLeftCtrlCapsLock}
+            className="font-bold"
           >
             끄기
           </Button>
         </div>
       </div>
-      {!loading && (
-        <p className="text-[14px]" style={{ color: "var(--text-muted)", paddingLeft: "4px" }}>
-          현재 상태: {swapLeftCtrlCapsLock ? "켜짐" : "꺼짐"}
-        </p>
-      )}
-      {result && (
-        <p
-          className="text-[14px] animate-fade-in"
-          style={{
-            color:
-              result.startsWith("실패") || result.startsWith("설정 읽기 실패")
-                ? "var(--error)"
-                : "var(--success)",
-            paddingLeft: "4px",
-          }}
-        >
-          {result}
-        </p>
-      )}
+
+      <TerminalOutput
+        lines={logs}
+        title="Keyboard Layout Log"
+        initiallyOpen={false}
+        maxHeight="180px"
+        showDownload={logs.length > 0}
+        onDownload={() => {
+          const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const content = `=== REKOIT 키보드 설정 로그 ===\n${logs.join("\n")}`;
+          const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `rekoit-keyboard-log-${timestamp}.txt`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }}
+      />
     </div>
   );
 }

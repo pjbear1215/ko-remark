@@ -38,24 +38,25 @@ const CHECKS: CheckDefinition[] = [
       `
         BTNXP_UART_OK=no
         BOOT_FIX_OK=no
-        PRIVACY_OK=yes
-        FAST_CONNECTABLE_OK=yes
+        PRIVACY_OK=no
+        FAST_CONNECTABLE_OK=no
         WAKE_RECONNECT_OK=no
         [ -f /etc/modules-load.d/btnxpuart.conf ] && BTNXP_UART_OK=yes
-        grep -q '^#ConditionPathIsDirectory=/sys/class/bluetooth' /usr/lib/systemd/system/bluetooth.service 2>/dev/null && BOOT_FIX_OK=yes
-        if [ -f /etc/bluetooth/main.conf ] && ! grep -q '^Privacy = off$' /etc/bluetooth/main.conf 2>/dev/null; then
-          PRIVACY_OK=no
+        # ConditionPathIsDirectory 라인이 주석처리(#) 되어있으면 OK
+        if ! grep -q "^ConditionPathIsDirectory" /usr/lib/systemd/system/bluetooth.service 2>/dev/null; then
+          BOOT_FIX_OK=yes
         fi
-        if [ -f /etc/bluetooth/main.conf ] && ! grep -q '^FastConnectable = true$' /etc/bluetooth/main.conf 2>/dev/null; then
-          FAST_CONNECTABLE_OK=no
+        if [ -f /etc/bluetooth/main.conf ]; then
+          grep -qi "Privacy.*=.*device" /etc/bluetooth/main.conf && PRIVACY_OK=yes
+          grep -qi "Privacy.*=.*off" /etc/bluetooth/main.conf && PRIVACY_OK=yes
+          grep -qi "FastConnectable.*=.*true" /etc/bluetooth/main.conf && FAST_CONNECTABLE_OK=yes
         fi
-        systemctl is-active rekoit-bt-wake-reconnect.service 2>/dev/null | grep -qx active && WAKE_RECONNECT_OK=yes
+        systemctl is-active rekoit-bt-wake-reconnect.service 2>/dev/null | grep -q active && WAKE_RECONNECT_OK=yes
         if [ "$BTNXP_UART_OK" = yes ] && [ "$BOOT_FIX_OK" = yes ] && [ "$PRIVACY_OK" = yes ] && [ "$FAST_CONNECTABLE_OK" = yes ] && [ "$WAKE_RECONNECT_OK" = yes ]; then
           echo OK
         else
           echo "FAIL: btnxpuart=$BTNXP_UART_OK boot_fix=$BOOT_FIX_OK privacy=$PRIVACY_OK fast_connectable=$FAST_CONNECTABLE_OK wake_reconnect=$WAKE_RECONNECT_OK"
-        fi
-      `,
+        fi      `,
     requires: "bt",
   },
 ];

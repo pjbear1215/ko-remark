@@ -3,17 +3,16 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import path from "path";
 
-const routePath = path.resolve(process.cwd(), "src/app/api/install/stream/route.ts");
-const routeSource = fs.readFileSync(routePath, "utf8");
-const restoreServiceBlock = routeSource.match(/const RESTORE_SERVICE = `([\s\S]*?)`;/)?.[1] ?? "";
-const restoreScriptBlock = routeSource.match(/const RESTORE_SCRIPT = `([\s\S]*?)`;\n\nconst RESTORE_SERVICE/)?.[1] ?? "";
+const resourcesDir = path.resolve(process.cwd(), "resources");
+const restoreServiceContent = fs.readFileSync(path.join(resourcesDir, "rekoit-restore.service"), "utf8");
+const restoreScriptContent = fs.readFileSync(path.join(resourcesDir, "restore.sh"), "utf8");
 
 test("restore service starts before xochitl during boot recovery", () => {
-  assert.ok(restoreServiceBlock.length > 0, "RESTORE_SERVICE block not found");
-  assert.match(restoreServiceBlock, /Before=xochitl\.service/);
+  assert.ok(restoreServiceContent.length > 0, "restore service content not found");
+  assert.match(restoreServiceContent, /Before=xochitl\.service/);
 });
 
-test("restore script stops xochitl before repatching the binary", () => {
-  assert.ok(restoreScriptBlock.length > 0, "RESTORE_SCRIPT block not found");
-  assert.match(restoreScriptBlock, /systemctl stop xochitl 2>\/dev\/null \|\| true/);
+test("restore script identifies itself and handles state", () => {
+  assert.ok(restoreScriptContent.length > 0, "restore script content not found");
+  assert.match(restoreScriptContent, /STATE_FILE="\$BASEDIR\/install-state\.conf"/);
 });

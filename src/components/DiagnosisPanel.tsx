@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 
 import Button from "@/components/Button";
 import SectionDivider from "@/components/SectionDivider";
+import TerminalOutput from "@/components/TerminalOutput";
 
 interface DiagnosisPanelProps {
   ip: string;
@@ -51,7 +52,7 @@ export default function DiagnosisPanel({
     const body = Object.entries(diagResult)
       .map(([key, value]) => `--- ${key} ---\n${value}`.trimEnd())
       .join("\n\n");
-    const content = `=== ReKoIt 진단 결과 ===\n시간: ${new Date().toISOString()}\n기기: ${ip}\n\n${body}\n`;
+    const content = `=== REKOIT 진단 결과 ===\n시간: ${new Date().toISOString()}\n기기: ${ip}\n\n${body}\n`;
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -63,65 +64,45 @@ export default function DiagnosisPanel({
     URL.revokeObjectURL(url);
   };
 
+  const logLines = useMemo(() => {
+    if (!diagResult) return [];
+    const lines: string[] = [];
+    Object.entries(diagResult).forEach(([key, value]) => {
+      lines.push(`=== ${key} ===`);
+      lines.push(...value.split("\n"));
+      lines.push(""); // spacer
+    });
+    return lines;
+  }, [diagResult]);
+
   return (
     <div className={className} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       <SectionDivider label={title} />
       <div
-        className="card-interactive flex items-center justify-between"
-        style={{ padding: "20px 24px" }}
+        className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
       >
-        <span className="text-[15px] font-medium" style={{ color: "var(--text-muted)" }}>
-          {subtitle}
-        </span>
-        <Button variant="secondary" size="sm" onClick={runDiagnosis} loading={diagnosing}>
+        <div>
+          <p className="text-[16px] font-bold text-black">
+            {title}
+          </p>
+          <p className="text-[13px] font-medium opacity-50 mt-0.5">
+            {subtitle}
+          </p>
+        </div>
+        <Button variant="primary" size="sm" onClick={runDiagnosis} loading={diagnosing} className="font-bold">
           실행
         </Button>
       </div>
       {diagResult && (
-        <div
-          className="card-static overflow-hidden animate-fade-in"
-          style={{ border: "none" }}
-        >
-          <div
-            className="flex items-center gap-2"
-            style={{
-              backgroundColor: "rgba(26, 26, 46, 0.8)",
-              backdropFilter: "blur(12px)",
-              WebkitBackdropFilter: "blur(12px)",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
-              padding: "10px 16px",
-            }}
-          >
-            <div className="flex gap-1.5">
-              <div className="w-[10px] h-[10px] rounded-full" style={{ backgroundColor: "#f87171" }} />
-              <div className="w-[10px] h-[10px] rounded-full" style={{ backgroundColor: "#fbbf24" }} />
-              <div className="w-[10px] h-[10px] rounded-full" style={{ backgroundColor: "#4ade80" }} />
-            </div>
-            <span className="text-[11px] font-mono" style={{ color: "rgba(255,255,255,0.3)", marginLeft: "8px" }}>
-              진단 결과
-            </span>
-            <div style={{ marginLeft: "auto" }}>
-              <Button variant="ghost" size="sm" onClick={downloadDiagnosis}>
-                파일로 저장
-              </Button>
-            </div>
-          </div>
-          <div
-            className="overflow-auto text-[12px] font-mono leading-[22px] terminal-scroll"
-            style={{
-              background: "linear-gradient(180deg, #1a1a2e 0%, #16213e 100%)",
-              color: "var(--terminal-text)",
-              maxHeight: "400px",
-              padding: "20px 24px",
-            }}
-          >
-            {Object.entries(diagResult).map(([key, value]) => (
-              <div key={key} style={{ marginBottom: "12px" }}>
-                <div style={{ color: "#818cf8" }}>--- {key} ---</div>
-                <pre className="whitespace-pre-wrap break-all">{value}</pre>
-              </div>
-            ))}
-          </div>
+        <div className="animate-fade-in">
+          <TerminalOutput
+            lines={logLines}
+            title="System Diagnosis"
+            initiallyOpen={true}
+            showDownload={true}
+            onDownload={downloadDiagnosis}
+            maxHeight="400px"
+          />
         </div>
       )}
     </div>

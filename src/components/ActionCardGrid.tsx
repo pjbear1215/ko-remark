@@ -19,11 +19,11 @@ export default function ActionCardGrid({
   onNavigate,
 }: ActionCardGridProps) {
   return (
-    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 animate-fade-in-up stagger-1">
+    <section className="grid gap-y-8 gap-x-3 md:grid-cols-2 xl:grid-cols-4 animate-fade-in-up stagger-1">
       {actions.map((action) => (
         <div
           key={action.id}
-          className="operator-card flex flex-col justify-between"
+          className="operator-card flex flex-col justify-between p-6"
           style={{ minHeight: "220px", gap: "20px" }}
         >
           <div>
