@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
-import { buildBluetoothKeyboardCleanupScript } from "@/lib/bluetoothCleanup.js";
+import { buildBluetoothKeyboardCleanupScript } from "@/lib/bluetooth/bluetoothCleanup.js";
 
 function runSshOnce(
   ip: string,
@@ -241,13 +241,18 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
 
     LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
     LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"
-    if grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; then
-      umount "$LIBEPAPER" 2>/dev/null || true
-    fi
+    
+    # 직접적인 bind mount 해제 (루프)
+    while grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; do
+      umount -l "$LIBEPAPER" 2>/dev/null || umount "$LIBEPAPER" 2>/dev/null || break
+      sleep 0.5
+    done
+    # tmpfs 소스 기반의 모든 마운트 지점 해제 (루프)
     while mount | grep -q "$LIBEPAPER_TMPFS"; do
       TARGET=$(mount | awk -v src="$LIBEPAPER_TMPFS" '$1==src {print $3; exit}')
       [ -n "$TARGET" ] || break
-      umount "$TARGET" 2>/dev/null || true
+      umount -l "$TARGET" 2>/dev/null || umount "$TARGET" 2>/dev/null || break
+      sleep 0.5
     done
     rm -f "$LIBEPAPER_TMPFS"
 
@@ -266,9 +271,9 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
     rm -f /etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service
     `}
 
-    # 폰트 제거
-    rm -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf
-    fc-cache -f 2>/dev/null || true
+    # 폰트 보존 (삭제하지 않음)
+    # rm -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf
+    # fc-cache -f 2>/dev/null || true
 
     # factory-guard, swupdate hook 제거
     ${otherStillInstalled ? "" : `
@@ -300,7 +305,7 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
     logs.push("ERROR: rootfs remount 실패 — 제거 불가");
     return logs;
   }
-  logs.push(`OK: 한글 입력 런타임, 폰트, libepaper 정리${otherStillInstalled ? "" : ", REKOIT guard 제거"}`);
+  logs.push(`OK: 한글 입력 런타임, libepaper 정리 (폰트 보존)${otherStillInstalled ? "" : ", REKOIT guard 제거"}`);
 
   await runSsh(ip, password, `
     rm -f /home/root/rekoit/install-hangul.sh
@@ -308,13 +313,13 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
     rm -f /home/root/rekoit/post-update-hangul.sh
     rm -f /home/root/rekoit/hangul-daemon
     rm -f /home/root/rekoit/hangul-daemon.service
-    rm -f /home/root/rekoit/fonts/NotoSansCJKkr-Regular.otf
+    # 폰트는 지우지 않고 유지합니다.
     rm -f /home/root/rekoit/backup/libepaper.so.original
     rm -f /home/root/rekoit/backup/libepaper.so.latest
     rm -f /home/root/rekoit/backup/font_existed
     find /home/root/rekoit -type d -empty -delete 2>/dev/null || true
   `);
-  logs.push("OK: REKOIT 한글 입력 관련 파일 정리");
+  logs.push("OK: REKOIT 한글 입력 관련 파일 정리 (폰트 유지)");
 
   // 3. 비활성 파티션 정리
   await runSsh(ip, password, `
@@ -332,7 +337,7 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
         rm -f /mnt/inactive/opt/rekoit/factory-guard.sh
         rmdir /mnt/inactive/opt/rekoit 2>/dev/null || true
         `}
-        rm -f /mnt/inactive/usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf
+        # 비활성 파티션의 폰트도 유지합니다.
         ${otherStillInstalled ? "" : `rm -f /mnt/inactive/etc/swupdate/conf.d/99-rekoit-postupdate`}
         rm -f /mnt/inactive/etc/systemd/system/hangul-daemon.service
         rm -f /mnt/inactive/etc/systemd/system/multi-user.target.wants/hangul-daemon.service
@@ -441,8 +446,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const normalizedTarget = target === "onscreen" ? "hangul" : target;
 
-    if (normalizedTarget !== "bt" && normalizedTarget !== "hangul") {
-      return NextResponse.json({ success: false, error: "target은 bt 또는 hangul" }, { status: 400 });
+    if (normalizedTarget !== "bt" && normalizedTarget !== "hangul" && normalizedTarget !== "font") {
+      return NextResponse.json({ success: false, error: "target은 bt, hangul 또는 font" }, { status: 400 });
     }
 
     // 현재 설치 상태 감지
@@ -456,13 +461,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ success: false, error: "제거할 한글 입력 구성 요소가 감지되지 않습니다" });
     }
 
-    const logs = normalizedTarget === "bt"
-      ? await removeBt(ip, password, detected.hangul)
-      : await removeHangul(ip, password, detected.bt);
+    let logs: string[] = [];
+    if (normalizedTarget === "bt") {
+      logs = await removeBt(ip, password, detected.hangul);
+    } else if (normalizedTarget === "hangul") {
+      logs = await removeHangul(ip, password, detected.bt);
+    } else if (normalizedTarget === "font") {
+      logs = await removeOnlyFont(ip, password);
+    }
 
     return NextResponse.json({ success: true, logs });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
+}
+
+async function removeOnlyFont(ip: string, password: string): Promise<string[]> {
+  const logs: string[] = [];
+  await runSsh(ip, password, `
+    # 신 경로 삭제 (사용자 데이터 영역)
+    rm -rf /home/root/.local/share/fonts/rekoit 2>/dev/null || true
+    
+    # 구 경로 삭제 (시스템 영역 - 기존 사용자 대응)
+    rm -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf 2>/dev/null || true
+    
+    fc-cache -f 2>/dev/null || true
+  `);
+  logs.push("OK: 한글 폰트 정리 완료 (구/신 경로 모두 확인)");
+  logs.push("OK: 폰트 캐시 갱신 완료");
+  return logs;
 }

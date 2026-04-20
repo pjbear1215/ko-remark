@@ -9,7 +9,7 @@ set -e
 BASEDIR="/home/root/rekoit"
 STATE_FILE="$BASEDIR/install-state.conf"
 FONT_SRC="$BASEDIR/fonts/NotoSansCJKkr-Regular.otf"
-FONT_DST="/usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf"
+FONT_DST="/home/root/.local/share/fonts/rekoit/NotoSansCJKkr-Regular.otf"
 SERVICE_SRC="$BASEDIR/hangul-daemon.service"
 LIBEPAPER="/usr/lib/plugins/platforms/libepaper.so"
 LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"

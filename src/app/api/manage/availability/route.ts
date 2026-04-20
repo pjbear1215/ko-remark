@@ -74,6 +74,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       else
         echo BT_INSTALLED=0
       fi
+      if [ -d /home/root/.local/share/fonts/rekoit ]; then
+        echo FONT_INSTALLED=1
+      else
+        echo FONT_INSTALLED=0
+      fi
       if [ -e /etc/systemd/system/hangul-daemon.service ] && [ "$HANGUL_SERVICE_LINK" != "/dev/null" ] || \
          [ -f /etc/modules-load.d/btnxpuart.conf ]; then
         echo INSTALLED=1
@@ -87,6 +92,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       installed: output.includes("INSTALLED=1"),
       hangulInstalled: output.includes("HANGUL_INSTALLED=1"),
       btInstalled: output.includes("BT_INSTALLED=1"),
+      fontInstalled: output.includes("FONT_INSTALLED=1"),
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

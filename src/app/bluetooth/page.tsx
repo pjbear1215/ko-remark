@@ -188,6 +188,30 @@ export default function BluetoothPage() {
                       ))}
                     </div>
                   )}
+
+                  {scanStatus === "scanned" && devices.length === 0 && (
+                    <div className="p-6 bg-black/[0.03] space-y-4 animate-fade-in">
+                      <div className="flex items-center gap-2 text-black">
+                        <span className="text-[18px]">🔍</span>
+                        <p className="font-bold">키보드를 찾을 수 없나요?</p>
+                      </div>
+                      <ul className="space-y-2 text-[14px] font-medium opacity-70">
+                        <li className="flex gap-2">
+                          <span className="shrink-0">•</span>
+                          <span>키보드가 <strong>페어링 모드</strong>(불빛이 깜빡이는 상태)인지 확인해 주세요.</span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="shrink-0">•</span>
+                          <span>다른 기기(태블릿, 스마트폰 등)와 이미 연결되어 있다면 연결을 해제해야 합니다.</span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="shrink-0">•</span>
+                          <span>키보드를 리마커블 기기 가까이 두고 <strong>[스캔 준비 시작]</strong>부터 다시 시도해 보세요.</span>
+                        </li>
+                      </ul>
+                      <Button variant="secondary" onClick={handlePrepare} className="w-full mt-2">다시 시도하기</Button>
+                    </div>
+                  )}
                 </div>
               )}
 

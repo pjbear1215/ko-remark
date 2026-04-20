@@ -8,7 +8,7 @@ LOCKFILE="/tmp/rekoit-reconnect.lock"
 POLL_CONFIG="/tmp/rekoit-poll-interval"
 
 # Interval settings (seconds)
-MIN_INTERVAL=20
+MIN_INTERVAL=10
 MAX_INTERVAL=300
 
 log_line() {

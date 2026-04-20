@@ -3,8 +3,8 @@ import { spawn, exec } from "child_process";
 import path from "path";
 import fs from "fs";
 import { getSshSessionFromRequest } from "@/lib/server/sshSession";
-import { renderInstallState } from "@/lib/installState.js";
-import { shouldRebuildArtifact } from "@/lib/buildArtifacts.js";
+import { renderInstallState } from "@/lib/remarkable/installState.js";
+import { shouldRebuildArtifact } from "@/lib/remarkable/buildArtifacts.js";
 
 interface FileMapping {
   local: string;
@@ -344,7 +344,7 @@ async function buildHangulDaemon(
   send: (event: string, data: Record<string, unknown>) => void,
 ): Promise<void> {
   const outputPath = path.join(resourceDir, "hangul-daemon/hangul-daemon");
-  const sourceDir = path.join(resourceDir, "source/hangul-daemon");
+  const sourceDir = path.resolve(process.cwd(), "services/hangul-daemon");
   const sourceFiles = [
     path.join(sourceDir, "main.go"),
     path.join(sourceDir, "go.mod"),
@@ -375,7 +375,7 @@ async function buildBluetoothHelper(
   send: (event: string, data: Record<string, unknown>) => void,
 ): Promise<void> {
   const outputPath = path.join(resourceDir, "rekoit-bt-helper/rekoit-bt-helper");
-  const sourceDir = path.join(resourceDir, "source/rekoit-bt-helper");
+  const sourceDir = path.resolve(process.cwd(), "services/rekoit-bt-helper");
   const sourceFiles = [
     path.join(sourceDir, "main.go"),
     path.join(sourceDir, "go.mod"),
@@ -740,29 +740,50 @@ export async function GET(request: NextRequest): Promise<Response> {
           ...(effectiveState.installBt ? FILES_BT : []),
         ];
 
+        send("log", { line: `INFO: 총 ${filesToUpload.length}개의 파일을 전송합니다 (기기 상태에 따라 시간이 걸릴 수 있습니다)...` });
+
         for (let i = 0; i < filesToUpload.length; i++) {
           const file = filesToUpload[i];
-          // 절대 경로(캐시)인 경우 그대로 사용, 상대 경로는 projectDir 기준
           const localPath = path.isAbsolute(file.local) ? file.local : path.join(projectDir, file.local);
 
           if (!fs.existsSync(localPath)) {
-            send("log", { line: `WARNING: ${file.local} not found, skipping` });
+            send("log", { line: `WARNING: ${file.local} 파일을 찾을 수 없어 건너뜁니다.` });
             continue;
           }
 
           send("step", { step: 2, name: `파일 업로드: ${file.remote}`, status: "running" });
+          
+          // 대용량 폰트 파일만 이미 존재하는지 확인하여 스킵
+          let skipUpload = false;
+          if (file.remote.endsWith(".otf")) {
+            try {
+              const check = await runSshOnce(ip, password, `[ -f "/home/root/rekoit/${file.remote}" ] && echo "YES" || echo "NO"`);
+              skipUpload = check.trim() === "YES";
+            } catch {
+              skipUpload = false;
+            }
+          }
+
+          if (skipUpload) {
+            send("log", { line: `OK: ${file.remote} (이미 존재함, 업로드 생략)` });
+          } else {
+            if (file.remote.endsWith(".otf") || file.remote.includes("daemon") || file.remote.includes("helper")) {
+              send("log", { line: `업로드 중: ${file.remote}...` });
+            }
+            await runScp(
+              ip,
+              password,
+              localPath,
+              `/home/root/rekoit/${file.remote}`,
+            );
+          }
+          
           send("progress", {
             percent: 30 + Math.round(((i + 1) / filesToUpload.length) * 30),
             step: 2,
           });
-
-          await runScp(
-            ip,
-            password,
-            localPath,
-            `/home/root/rekoit/${file.remote}`,
-          );
         }
+        send("log", { line: "OK: 모든 파일 업로드 완료" });
         send("step", { step: 2, name: "파일 업로드 완료", status: "complete" });
 
         // === Step 3: 롤백 스크립트 업로드 ===

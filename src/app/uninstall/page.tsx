@@ -41,15 +41,15 @@ export default function UninstallPage() {
     : "전체 원상복구";
   const pageDescription = isPartialRemove
     ? removeTarget === "hangul"
-      ? "한글 입력 엔진 관련 항목만 제거하고 블루투스 도우미 관련 구성은 유지합니다."
-      : "블루투스 도우미 관련 항목만 제거하고 한글 입력 엔진 구성은 유지합니다."
-    : "설치된 한글 입력 엔진/블루투스 도우미 설치를 모두 제거하고 원본 상태로 복원합니다.";
+      ? "한글 입력 엔진 관련 항목만 제거하고 블루투스 도우미 관련 구성과 한글 폰트는 유지합니다."
+      : "블루투스 도우미 관련 항목만 제거하고 한글 입력 엔진 구성과 한글 폰트는 유지합니다."
+    : "설치된 한글 입력 엔진/블루투스 도우미를 모두 제거하고 원본 상태로 복원합니다. (한글 폰트는 유지됩니다.)";
   const readyGuideTitle = isPartialRemove ? "부분 제거 안내" : "복구 작업 안내";
   const completeMessage = isPartialRemove
     ? removeTarget === "hangul"
-      ? "한글 입력 엔진 제거가 완료되었습니다."
+      ? "한글 입력 엔진 제거가 완료되었습니다. 한글 폰트는 기기에 유지되어 있습니다."
       : "블루투스 도우미 제거가 완료되었습니다."
-    : "전체 원상복구가 완료되었습니다.";
+    : "전체 원상복구가 완료되었습니다. 한글 폰트는 기기에 유지되어 있습니다.";
   const errorContext = isPartialRemove ? "부분 제거" : "원상복구";
   const startLabel = isPartialRemove ? "제거 시작" : "제거 시작";
 
@@ -221,7 +221,7 @@ export default function UninstallPage() {
                         "설치된 항목을 자동 감지하여 해당 항목만 복구합니다",
                         "양쪽 파티션(현재 + 비활성) 모두 정리됩니다",
                         "펌웨어 업데이트 보호 장치도 함께 제거됩니다",
-                        "한글 폰트도 함께 삭제됩니다"
+                        "한글 폰트는 기기에 유지됩니다"
                       ]).map((text, i) => (
                         <li key={i} className="flex items-start gap-3">
                           <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />

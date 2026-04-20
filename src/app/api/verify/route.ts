@@ -24,7 +24,7 @@ const CHECKS: CheckDefinition[] = [
   {
     name: "한글 폰트",
     command:
-      "test -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf && echo OK || echo FAIL",
+      "[ -d /home/root/.local/share/fonts/rekoit ] && echo OK || echo FAIL",
     requires: "hangul",
   },
   {

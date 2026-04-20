@@ -9,7 +9,7 @@ import {
   getRecommendedAction,
   getRuntimeStateLabel,
   getSafetyStatus,
-} from "@/lib/deviceStatus.js";
+} from "@/lib/remarkable/deviceStatus.js";
 
 interface CheckResult {
   id: string;
@@ -133,7 +133,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         else
           echo "HANGUL_SERVICE=no"
         fi
-        [ -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf ] && echo "HANGUL_FONT=yes" || echo "HANGUL_FONT=no"
+        if [ -d /home/root/.local/share/fonts/rekoit ]; then
+          echo "HANGUL_FONT=yes"
+        else
+          echo "HANGUL_FONT=no"
+        fi
         if [ -f /home/root/rekoit/install-state.conf ]; then
           . /home/root/rekoit/install-state.conf
           echo "STATE_INSTALL_HANGUL=\${INSTALL_HANGUL:-}"
@@ -184,9 +188,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const detectedDevice = detectDevice(values.MODEL ?? "unknown");
     const hasHangulRuntime = values.HANGUL_SERVICE === "yes";
     const hasBtConfig = values.BT_RUNTIME === "yes";
+    const hasFont = values.HANGUL_FONT === "yes";
     const runtimeState = deriveRuntimeState({ hasHangulRuntime, hasBtConfig });
 
     const checks: CheckResult[] = [
+      {
+        id: "hangul-font",
+        label: "한글 폰트",
+        pass: hasFont,
+        detail: hasFont ? "설치됨" : "미설치",
+      },
       {
         id: "reboot-ready",
         label: "재부팅 유지",

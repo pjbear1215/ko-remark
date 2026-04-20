@@ -4,11 +4,11 @@ import { getSshSessionFromRequest } from "@/lib/server/sshSession";
 import {
   buildBluetoothKeyboardCleanupScript,
   buildKeyboardBluetoothAddressScanScript,
-} from "@/lib/bluetoothCleanup.js";
+} from "@/lib/bluetooth/bluetoothCleanup.js";
 import {
   buildFontRemovalCommands,
   HANGUL_FONT_PATH,
-} from "@/lib/uninstallFontBehavior.js";
+} from "@/lib/remarkable/uninstallFontBehavior.js";
 
 function runSshOnce(
   ip: string,
@@ -249,22 +249,21 @@ export async function GET(request: NextRequest): Promise<Response> {
         send("step", { step: 0, name: "설치 상태 감지", status: "complete" });
         send("progress", { percent: 10, step: 0 });
 
-        // === Step 1: 서비스 중지 ===
-        send("step", { step: 1, name: "서비스 중지", status: "running" });
+        // === Step 1: 서비스 중지 및 환경 준비 ===
+        send("step", { step: 1, name: "서비스 중지 및 환경 준비", status: "running" });
         send("progress", { percent: 15, step: 1 });
 
-        // 모든 REKOIT 관련 서비스를 중지 + disable + mask
-        // mask는 /dev/null 심링크를 생성하여 daemon-reload 후에도 절대 실행 불가능하게 함
-        // overlay 캐시에 서비스 파일이 남아있어도 mask 상태면 systemd가 무시함
+        // 모든 관련 서비스를 중지 + disable
+        // 또한 전체 프로세스를 위해 루트 파티션을 rw로 마운트
         await runSsh(ip, password, `
+          mount -o remount,rw / 2>/dev/null || true
           for svc in rekoit-factory-guard hangul-daemon rekoit-restore rekoit-bt-agent rekoit-bt-wake-reconnect; do
             systemctl stop "$svc" 2>/dev/null || true
             systemctl disable "$svc" 2>/dev/null || true
-            systemctl mask "$svc" 2>/dev/null || true
           done
           killall hangul-daemon 2>/dev/null || true
         `);
-        send("log", { line: "OK: REKOIT 서비스 전체 중지/비활성화/mask" });
+        send("log", { line: "OK: 관련 서비스 중지 및 rw 권한 확보" });
 
         if (detected.btInstalled || detected.hasKeyboardPairings) {
           const btCleanupResult = await runSsh(ip, password, buildBluetoothKeyboardCleanupScript());
@@ -292,13 +291,17 @@ export async function GET(request: NextRequest): Promise<Response> {
           LIBEPAPER_TMPFS="/dev/shm/hangul-libepaper.so"
 
           unmount_libepaper_mounts() {
-            if grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; then
-              umount "$LIBEPAPER" 2>/dev/null || true
-            fi
+            # 직접적인 bind mount 해제
+            while grep -q " $LIBEPAPER " /proc/mounts 2>/dev/null; do
+              umount -l "$LIBEPAPER" 2>/dev/null || umount "$LIBEPAPER" 2>/dev/null || break
+              sleep 0.5
+            done
+            # tmpfs 소스 기반의 모든 마운트 지점 해제
             while mount | grep -q "$LIBEPAPER_TMPFS"; do
               TARGET=$(mount | awk -v src="$LIBEPAPER_TMPFS" '$1==src {print $3; exit}')
               [ -n "$TARGET" ] || break
-              umount "$TARGET" 2>/dev/null || true
+              umount -l "$TARGET" 2>/dev/null || umount "$TARGET" 2>/dev/null || break
+              sleep 0.5
             done
           }
 
@@ -374,7 +377,8 @@ export async function GET(request: NextRequest): Promise<Response> {
           # === 통합 검증 (direct mount에서 확인) ===
           echo "POST_RM_CHECK:"
           [ -d /mnt/direct_rootfs/opt/rekoit ] && echo "STILL:/opt/rekoit" || echo "GONE:/opt/rekoit"
-          [ -f /mnt/direct_rootfs${HANGUL_FONT_PATH} ] && echo "STILL:font" || echo "GONE:font"
+          # 폰트는 이제 보존이 기본 정책이므로 존재 여부만 확인
+          [ -d /mnt/direct_rootfs/home/root/.local/share/fonts/rekoit ] && echo "KEPT:font" || echo "GONE:font"
           [ -f /mnt/direct_rootfs/etc/systemd/system/rekoit-factory-guard.service ] && echo "STILL:rekoit-factory-guard.service" || echo "GONE:rekoit-factory-guard.service"
           [ -f /mnt/direct_rootfs/etc/swupdate/conf.d/99-rekoit-postupdate ] && echo "STILL:swupdate-hook" || echo "GONE:swupdate-hook"
           [ -f /mnt/direct_rootfs/etc/modules-load.d/btnxpuart.conf ] && echo "STILL:btnxpuart" || echo "GONE:btnxpuart"
@@ -396,10 +400,22 @@ export async function GET(request: NextRequest): Promise<Response> {
         }
 
         // 파일 삭제 결과
-        if (stillExists.length > 0) {
-          for (const item of stillExists) {
-            send("log", { line: `WARNING: 삭제 실패 — ${item.replace("STILL:", "")}` });
+        const stillItems = stillExists.map(i => i.replace("STILL:", ""));
+        const goneItemsClean = goneItems.map(i => i.replace("GONE:", ""));
+        const keptItems = directResult.split("\n").filter((l) => l.startsWith("KEPT:"));
+
+        if (stillItems.length > 0) {
+          for (const item of stillItems) {
+            // 폰트가 삭제 실패 목록에 있는 것은 보존 정책 때문이므로 경고하지 않음
+            if (item.includes("font")) continue;
+            send("log", { line: `WARNING: 삭제 실패 — ${item}` });
           }
+        }
+        
+        if (keptItems.some(i => i.includes("font"))) {
+          send("log", { line: "OK: 한글 폰트 유지됨 (사용자 데이터 영역)" });
+        } else if (goneItemsClean.some(i => i.includes("font"))) {
+          send("log", { line: "OK: 한글 폰트 제거됨" });
         }
 
         if (directResult.includes("GONE:/opt/rekoit")) {
@@ -437,19 +453,19 @@ export async function GET(request: NextRequest): Promise<Response> {
         send("step", { step: 2, name: "시스템 파일 제거", status: "complete" });
         send("progress", { percent: 50, step: 2 });
 
-        // === Step 3: overlay 정리 + daemon-reload (현재 세션 반영용) ===
-        // root mount에서는 overlay /etc 파일만 rm (tmpfs에만 영향, ext4 쓰기 없음)
-        send("step", { step: 3, name: "overlay 정리", status: "running" });
+        // === Step 3: 시스템 설정 원복 ===
+        send("step", { step: 3, name: "시스템 설정 원복", status: "running" });
         send("progress", { percent: 55, step: 3 });
 
         await runSsh(ip, password, `
-          # overlay /etc 파일 rm (현재 세션 즉시 반영용 — 리부트 후에는 direct mount 삭제가 유효)
+          # overlay /etc 및 /opt 파일 rm (현재 세션 즉시 반영용)
+          rm -rf /opt/rekoit 2>/dev/null || true
           rm -f /etc/systemd/system/hangul-daemon.service /etc/systemd/system/rekoit-restore.service /etc/systemd/system/rekoit-factory-guard.service /etc/systemd/system/rekoit-bt-agent.service /etc/systemd/system/rekoit-bt-wake-reconnect.service
           rm -f /etc/systemd/system/multi-user.target.wants/hangul-daemon.service /etc/systemd/system/multi-user.target.wants/rekoit-restore.service /etc/systemd/system/multi-user.target.wants/rekoit-factory-guard.service /etc/systemd/system/multi-user.target.wants/rekoit-bt-agent.service /etc/systemd/system/multi-user.target.wants/rekoit-bt-wake-reconnect.service
           rm -rf /etc/systemd/system/bluetooth.service.d 2>/dev/null
           rm -f /etc/swupdate/conf.d/99-rekoit-postupdate /etc/modules-load.d/btnxpuart.conf
-          rm -rf /opt/rekoit 2>/dev/null || true
           ${buildFontRemovalCommands({ deleteFont, ignoreMissing: true, refreshCache: true })}
+          sync
           sed -i 's|^##*ConditionPathIsDirectory=/sys/class/bluetooth|ConditionPathIsDirectory=/sys/class/bluetooth|' /usr/lib/systemd/system/bluetooth.service 2>/dev/null || true
           sed -i '/^Privacy = off$/d' /etc/bluetooth/main.conf 2>/dev/null || true
           sed -i '/^FastConnectable = true$/d' /etc/bluetooth/main.conf 2>/dev/null || true
@@ -464,12 +480,11 @@ SWAP_LEFT_CTRL_CAPSLOCK=0
 KEYBOARD_LOCALES=
 STATE_EOF
           fi
-          for svc in rekoit-factory-guard hangul-daemon rekoit-restore rekoit-bt-agent rekoit-bt-wake-reconnect; do
-            systemctl mask "$svc" 2>/dev/null || true
-          done
+          # 모든 작업 완료 후 읽기 전용으로 전환
+          mount -o remount,ro / 2>/dev/null || true
           systemctl daemon-reload && sync
         `);
-        send("log", { line: "OK: overlay 정리 + install-state 초기화 + daemon-reload" });
+        send("log", { line: "OK: 시스템 설정 원복 및 ro 전환 완료" });
 
         send("step", { step: 3, name: "overlay 정리", status: "complete" });
         send("progress", { percent: 60, step: 3 });

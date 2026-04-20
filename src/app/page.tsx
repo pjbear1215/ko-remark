@@ -182,11 +182,11 @@ export default function WelcomePage() {
                 <ul className="space-y-2 text-[15px]" style={{ color: "#333333" }}>
                   <li className="flex items-start gap-3">
                     <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                    <span className="font-medium">USB 케이블이 연결되어 있어야 합니다.</span>
+                    <span className="font-medium">기기와 SSH 연결이 가능해야 합니다. (USB 또는 무선)</span>
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                    <span className="font-medium">기기에서 개발자 모드와 SSH가 켜져 있어야 합니다.</span>
+                    <span className="font-medium">기기에서 개발자 모드와 SSH가 활성화되어 있어야 합니다.</span>
                   </li>
                 </ul>
               </div>
@@ -207,7 +207,7 @@ export default function WelcomePage() {
                   transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)"
                 }}
               >
-                {isReachable ? "USB 연결 확인 완료 ✓" : "USB 연결 확인"}
+                {isReachable ? "SSH 연결 확인 완료 ✓" : "SSH 연결 확인"}
               </Button>
 
               {pingResult && !isReachable && (

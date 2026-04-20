@@ -9,7 +9,7 @@ import {
   getPackageManagerActionLabel,
   getPackageManagerBootstrapHint,
   getToolStatuses,
-} from "@/lib/prerequisites";
+} from "@/lib/remarkable/prerequisites";
 
 async function getSnapshot() {
   const platform = getHostPlatform();

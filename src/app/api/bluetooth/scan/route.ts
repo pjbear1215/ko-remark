@@ -4,8 +4,8 @@ import { getSshSessionFromRequest } from "@/lib/server/sshSession";
 import {
   extractDiscoveredDevice,
   isDisplayableBluetoothDeviceName,
-} from "@/lib/bluetoothScan.js";
-import { sanitizeBluetoothLine } from "@/lib/bluetoothPairing.js";
+} from "@/lib/bluetooth/bluetoothScan.js";
+import { sanitizeBluetoothLine } from "@/lib/bluetooth/bluetoothPairing.js";
 
 export async function GET(request: NextRequest): Promise<Response> {
   const session = getSshSessionFromRequest(request);

@@ -18,8 +18,9 @@ export default function ManagePage() {
   const [installedState, setInstalledState] = useState({
     hangul: state.installHangul,
     bt: state.installBtKeyboard,
+    font: false,
   });
-  const [fontUploading, setFontUploading] = useState(false);
+  const [fontActionLoading, setFontActionLoading] = useState(false);
   const [fontResult, setFontResult] = useState<string | null>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
 
@@ -50,6 +51,7 @@ export default function ManagePage() {
         const nextInstalledState = {
           hangul: data.hangulInstalled === true,
           bt: data.btInstalled === true,
+          font: data.fontInstalled === true,
         };
         setInstalledState(nextInstalledState);
         setState({
@@ -67,6 +69,31 @@ export default function ManagePage() {
       cancelled = true;
     };
   }, [mounted, state.ip, state.password]);
+
+  const handleRemoveFont = async () => {
+    if (!confirm("정말 한글 폰트를 제거하시겠습니까? 한글 입력 엔진이 설치된 상태라면 한글이 보이지 않게 됩니다.")) return;
+    
+    setFontActionLoading(true);
+    setFontResult(null);
+    try {
+      const res = await fetch("/api/manage/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ip: state.ip, password: state.password, target: "font" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setFontResult("폰트 제거 성공");
+        setInstalledState(prev => ({ ...prev, font: false }));
+      } else {
+        setFontResult(`실패: ${data.error}`);
+      }
+    } catch {
+      setFontResult("서버 오류");
+    } finally {
+      setFontActionLoading(false);
+    }
+  };
 
   if (!mounted || !state.ip || !state.password) {
     return null;
@@ -92,18 +119,20 @@ export default function ManagePage() {
             {/* 원상복구 섹션 */}
               <div className="space-y-4">
                 <SectionDivider label="복구 및 제거" />
-                <div className="grid gap-4">
-                  <div
-                    className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
-                  >
-                    <div>
-                      <p className="text-[16px] font-bold text-black">전체 원상복구</p>
-                      <p className="text-[13px] font-medium opacity-50 mt-0.5">모든 설치 항목을 제거하고 기기를 순정 상태로 되돌립니다.</p>
+                <div className="space-y-4">
+                  {(installedState.hangul || installedState.bt) && (
+                    <div
+                      className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                    >
+                      <div>
+                        <p className="text-[16px] font-bold text-black">전체 원상복구</p>
+                        <p className="text-[13px] font-medium opacity-50 mt-0.5">모든 설치 항목을 제거하고 기기를 순정 상태로 되돌립니다. (한글 폰트는 유지됨)</p>
+                      </div>
+                      <Button variant="primary" size="sm" onClick={() => router.push("/uninstall")} className="font-bold">
+                        시작
+                      </Button>
                     </div>
-                    <Button variant="primary" size="sm" onClick={() => router.push("/uninstall")} className="font-bold">
-                      시작
-                    </Button>
-                  </div>
+                  )}
 
                   <div className="grid gap-4 md:grid-cols-2">
                     {installedState.hangul && (
@@ -112,7 +141,7 @@ export default function ManagePage() {
                       >
                         <div>
                           <p className="text-[16px] font-bold text-black">한글 입력 엔진 제거</p>
-                          <p className="text-[13px] font-medium opacity-50 mt-0.5">한글 관련 파일만 정리합니다.</p>
+                          <p className="text-[13px] font-medium opacity-50 mt-0.5">한글 관련 파일만 정리합니다. (폰트 유지)</p>
                         </div>
                         <Button variant="primary" size="sm" onClick={() => router.push("/uninstall?target=hangul")} className="font-bold">
                           시작
@@ -133,6 +162,26 @@ export default function ManagePage() {
                         </Button>
                       </div>
                     )}
+
+                    {installedState.font && (
+                      <div
+                        className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                      >
+                        <div>
+                          <p className="text-[16px] font-bold text-black">한글 폰트만 제거</p>
+                          <p className="text-[13px] font-medium opacity-50 mt-0.5">설치된 폰트 파일만 삭제합니다.</p>
+                        </div>
+                        <Button 
+                          variant="primary" 
+                          size="sm" 
+                          onClick={handleRemoveFont} 
+                          loading={fontActionLoading} 
+                          className="font-bold"
+                        >
+                          삭제
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -144,6 +193,60 @@ export default function ManagePage() {
                   <KeyboardSwapControl ip={state.ip} password={state.password} />
                 </div>
               )}
+
+              {/* 폰트 설정 */}
+              <div className="space-y-4">
+                <SectionDivider label="폰트 관리" />
+                <div className="grid gap-4">
+                  <div
+                    className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                  >
+                    <div>
+                      <p className="text-[16px] font-bold text-black">사용자 폰트 업로드</p>
+                      <p className="text-[13px] font-medium opacity-50 mt-0.5">기본 Noto Sans 외의 다른 폰트를 사용하고 싶을 때 업로드합니다.</p>
+                    </div>
+                    <input
+                      ref={fontInputRef}
+                      type="file"
+                      accept=".otf,.ttf"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setFontActionLoading(true);
+                        setFontResult(null);
+                        const formData = new FormData();
+                        formData.append("font", file);
+                        formData.append("ip", state.ip);
+                        formData.append("password", state.password);
+                        try {
+                          const res = await fetch("/api/font/upload", { method: "POST", body: formData });
+                          const data = await res.json();
+                          if (data.success) {
+                            setFontResult("폰트 업로드 성공");
+                            setInstalledState(prev => ({ ...prev, font: true }));
+                          } else {
+                            setFontResult(`실패: ${data.error}`);
+                          }
+                        } catch {
+                          setFontResult("서버 오류");
+                        } finally {
+                          setFontActionLoading(false);
+                          if (fontInputRef.current) fontInputRef.current.value = "";
+                        }
+                      }}
+                    />
+                    <Button variant="primary" size="sm" onClick={() => fontInputRef.current?.click()} loading={fontActionLoading} className="font-bold">
+                      파일 선택
+                    </Button>
+                  </div>
+                </div>
+                {fontResult && (
+                  <p className="text-[13px] font-bold px-1 animate-fade-in" style={{ color: fontResult.includes("실패") ? "#d93025" : "#1e8e3e" }}>
+                    {fontResult}
+                  </p>
+                )}
+              </div>
 
               {/* 블루투스 설정 */}
               {installedState.bt && (
@@ -161,52 +264,6 @@ export default function ManagePage() {
                     </Button>
                   </div>
                   <BluetoothPowerControl ip={state.ip} password={state.password} />
-                </div>
-              )}
-
-              {/* 폰트 설정 */}
-              {installedState.hangul && (
-                <div className="space-y-4">
-                  <SectionDivider label="폰트 관리" />
-                  <div
-                    className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
-                  >
-                    <span className="text-[16px] font-bold text-black">사용자 폰트 업로드</span>
-                    <input
-                      ref={fontInputRef}
-                      type="file"
-                      accept=".otf,.ttf"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        setFontUploading(true);
-                        setFontResult(null);
-                        const formData = new FormData();
-                        formData.append("font", file);
-                        formData.append("ip", state.ip);
-                        formData.append("password", state.password);
-                        try {
-                          const res = await fetch("/api/font/upload", { method: "POST", body: formData });
-                          const data = await res.json();
-                          setFontResult(data.success ? data.message : `실패: ${data.error}`);
-                        } catch {
-                          setFontResult("서버 오류");
-                        } finally {
-                          setFontUploading(false);
-                          if (fontInputRef.current) fontInputRef.current.value = "";
-                        }
-                      }}
-                    />
-                    <Button variant="primary" size="sm" onClick={() => fontInputRef.current?.click()} loading={fontUploading} className="font-bold">
-                      파일 선택
-                    </Button>
-                  </div>
-                  {fontResult && (
-                    <p className="text-[13px] font-bold px-1" style={{ color: fontResult.includes("실패") ? "#d93025" : "#1e8e3e" }}>
-                      {fontResult}
-                    </p>
-                  )}
                 </div>
               )}
 

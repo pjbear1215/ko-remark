@@ -14,7 +14,7 @@ import {
   parseBluetoothInfoStatus,
   shouldTreatPairingAttemptAsSuccess,
   sanitizeBluetoothLine,
-} from "@/lib/bluetoothPairing.js";
+} from "@/lib/bluetooth/bluetoothPairing.js";
 
 function persistBluetoothPowerState(
   session: { ip: string; password: string },

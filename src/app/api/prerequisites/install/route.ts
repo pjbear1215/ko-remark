@@ -5,7 +5,7 @@ import {
   buildSingleToolInstallCommand,
   detectPackageManager,
   getToolStatuses,
-} from "@/lib/prerequisites";
+} from "@/lib/remarkable/prerequisites";
 
 const execAsync = promisify(exec);
 
