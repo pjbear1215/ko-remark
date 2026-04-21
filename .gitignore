@@ -1,14 +1,5 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
 /node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
 
 # testing
 /coverage
@@ -16,6 +7,8 @@
 # next.js
 /.next/
 /out/
+*.tsbuildinfo
+next-env.d.ts
 
 # production
 /build
@@ -23,38 +16,19 @@
 # misc
 .DS_Store
 *.pem
+.env*
+.vercel
 
 # debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-
-# Built binaries (compiled from source during setup)
-resources/hangul-compose-hook/hangul_hook.so
+# Built binaries (compiled or downloaded during setup)
 resources/hangul-daemon/hangul-daemon
-resources/fonts/NotoSansCJKkr-Regular.otf
-dist/bncedgb-glitch/
-
-# Development artifacts
-resources/source/*.so
-
-# Default Next.js assets (unused)
-public/vercel.svg
-public/next.svg
-public/file.svg
-public/globe.svg
-public/window.svg
+resources/rekoit-bt-helper/rekoit-bt-helper
+resources/fonts/
+dist/
 
 # Temp files
 _*.js

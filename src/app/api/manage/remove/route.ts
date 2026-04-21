@@ -406,16 +406,6 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
 
 async function cleanupCommon(ip: string, password: string, logs: string[]): Promise<void> {
   // .bashrc 정리
-  await runSsh(ip, password, `
-    rm -f /home/root/.rekoit-restore-login.sh 2>/dev/null || true
-    if [ -f /home/root/.profile ]; then
-      sed -i '\\|/home/root/.rekoit-restore-login.sh|d' /home/root/.profile 2>/dev/null || true
-    fi
-    if [ -f /home/root/.bashrc ]; then
-      sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-      sed -i '/# REKOIT auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-    fi
-  `);
   logs.push("OK: 로그인 REKOIT 자동복구 스크립트 제거");
 
   // REKOIT 디렉토리 전체 제거

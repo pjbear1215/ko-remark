@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import StepIndicator from "@/components/StepIndicator";
 import Button from "@/components/Button";
 import { useSetup } from "@/lib/store";
+import Image from "next/image";
+import logoImg from "./rekoit.png";
 
 export default function WelcomePage() {
   const router = useRouter();
@@ -64,7 +66,17 @@ export default function WelcomePage() {
       <StepIndicator currentStep={0} />
 
       <div className="space-y-4">
-        <div>
+        <div className="flex flex-col items-center text-center py-6">
+          <div className="mb-6 relative w-24 h-24">
+            <Image
+              src={logoImg}
+              alt="REKOIT Logo"
+              width={96}
+              height={96}
+              priority
+              className="object-contain"
+            />
+          </div>
           <h1
             className="text-[36px] font-bold leading-tight"
             style={{ color: "#000000" }}
@@ -72,7 +84,7 @@ export default function WelcomePage() {
             REKOIT
           </h1>
           <p
-            className="mt-3 text-[16px] font-medium"
+            className="mt-3 text-[16px] font-medium max-w-md"
             style={{ color: "#666666" }}
           >
             reMarkable 기기에 한글 입력 엔진과 블루투스 도우미를 설치합니다. 시작을 위해 USB 연결과 SSH 정보를 확인하세요.
@@ -158,7 +170,7 @@ export default function WelcomePage() {
                   className="mt-2 text-[12px] font-medium"
                   style={{ color: "#666666" }}
                 >
-                  설정 &gt; 일반 &gt; 도움말 &gt; 저작권 및 라이선스에서 확인할 수 있습니다.
+                  Settings &gt; Help &gt; Copyrights and licenses &gt; General Information &gt; GPLv3 Compliance에서 확인할 수 있습니다.
                 </p>
               </div>
 

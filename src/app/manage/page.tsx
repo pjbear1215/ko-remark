@@ -24,6 +24,10 @@ export default function ManagePage() {
   const [fontResult, setFontResult] = useState<string | null>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
 
+  const [btDevices, setBtDevices] = useState<Array<{ address: string; connected: boolean; name: string }>>([]);
+  const [btLoading, setBtLoading] = useState(false);
+  const [btRemoving, setBtRemoving] = useState<string | null>(null);
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -33,6 +37,26 @@ export default function ManagePage() {
       router.replace("/");
     }
   }, [mounted, state.ip, state.password, router]);
+
+  const loadBtDevices = async () => {
+    if (!state.ip || !state.password) return;
+    setBtLoading(true);
+    try {
+      const res = await fetch("/api/bluetooth/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ip: state.ip, password: state.password }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBtDevices(data.devices || []);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setBtLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!mounted || !state.ip || !state.password) return;
@@ -58,6 +82,10 @@ export default function ManagePage() {
           installHangul: nextInstalledState.hangul,
           installBtKeyboard: nextInstalledState.bt,
         });
+
+        if (nextInstalledState.bt) {
+          loadBtDevices();
+        }
       } catch {
         // fall back to in-memory state
       }
@@ -69,6 +97,29 @@ export default function ManagePage() {
       cancelled = true;
     };
   }, [mounted, state.ip, state.password]);
+
+  const handleRemoveDevice = async (address: string, name: string) => {
+    if (!confirm(`'${name}' 기기를 삭제하시겠습니까?`)) return;
+    
+    setBtRemoving(address);
+    try {
+      const res = await fetch("/api/bluetooth/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ip: state.ip, password: state.password, address }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBtDevices(prev => prev.filter(d => d.address !== address));
+      } else {
+        alert(`삭제 실패: ${data.error || "알 수 없는 오류"}`);
+      }
+    } catch {
+      alert("서버 오류가 발생했습니다.");
+    } finally {
+      setBtRemoving(null);
+    }
+  };
 
   const handleRemoveFont = async () => {
     if (!confirm("정말 한글 폰트를 제거하시겠습니까? 한글 입력 엔진이 설치된 상태라면 한글이 보이지 않게 됩니다.")) return;
@@ -178,7 +229,7 @@ export default function ManagePage() {
                           loading={fontActionLoading} 
                           className="font-bold"
                         >
-                          삭제
+                          시작
                         </Button>
                       </div>
                     )}
@@ -252,12 +303,53 @@ export default function ManagePage() {
               {installedState.bt && (
                 <div className="space-y-4">
                   <SectionDivider label="블루투스 제어" />
+                  
+                  {/* 등록된 기기 목록 */}
+                  <div className="space-y-3">
+                    <label className="block text-[13px] font-bold uppercase tracking-wider px-1">등록된 기기</label>
+                    <div className="space-y-2">
+                      {btLoading && btDevices.length === 0 ? (
+                        <div className="p-4 bg-black/[0.03] border border-black/5 text-center text-[13px] text-muted animate-pulse">
+                          기기 목록을 불러오는 중...
+                        </div>
+                      ) : btDevices.length > 0 ? (
+                        btDevices.map((device) => (
+                          <div
+                            key={device.address}
+                            className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`w-2.5 h-2.5 rounded-full ${device.connected ? "bg-green-500" : "bg-black/20"}`} />
+                              <div>
+                                <p className="text-[15px] font-bold text-black">{device.name || "이름 없는 기기"}</p>
+                                <p className="text-[12px] font-mono opacity-50">{device.address}</p>
+                              </div>
+                            </div>
+                            <Button 
+                              variant="secondary" 
+                              size="sm" 
+                              onClick={() => handleRemoveDevice(device.address, device.name)}
+                              loading={btRemoving === device.address}
+                              className="font-bold border-none bg-black/5 hover:bg-red-50 hover:text-red-600 transition-colors"
+                            >
+                              삭제
+                            </Button>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-8 bg-black/[0.03] border border-black/5 text-center">
+                          <p className="text-[14px] text-muted font-medium">등록된 블루투스 기기가 없습니다.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   <div
                     className="flex items-center justify-between p-4 bg-black/[0.03] border border-black/5"
                   >
                     <div>
-                      <p className="text-[16px] font-bold text-black">키보드 재설정</p>
-                      <p className="text-[13px] font-medium opacity-50 mt-0.5">다시 스캔하여 다른 키보드를 연결합니다.</p>
+                      <p className="text-[16px] font-bold text-black">새 키보드 연결</p>
+                      <p className="text-[13px] font-medium opacity-50 mt-0.5">주변 기기를 다시 스캔하여 페어링을 진행합니다.</p>
                     </div>
                     <Button variant="primary" size="sm" onClick={() => router.push("/bluetooth?mode=manage")} className="font-bold">
                       설정 열기

@@ -31,8 +31,7 @@
     "dev": "node scripts/open-localhost.js http://localhost:3000 2000 & next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "prepare:github-bundle": "bash scripts/prepare-github-bundle.sh"
+    "lint": "eslint"
   },
   "dependencies": {
     "fzstd": "^0.1.1",

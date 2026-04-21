@@ -509,14 +509,6 @@ STATE_EOF
 
         // .bashrc 정리
         await runSsh(ip, password, `
-          rm -f /home/root/.rekoit-restore-login.sh 2>/dev/null || true
-          if [ -f /home/root/.profile ]; then
-            sed -i '\\|/home/root/.rekoit-restore-login.sh|d' /home/root/.profile 2>/dev/null || true
-          fi
-          if [ -f /home/root/.bashrc ]; then
-            sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-            sed -i '/# REKOIT auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-          fi
           systemctl stop bluetooth.service 2>/dev/null || true
         `);
 

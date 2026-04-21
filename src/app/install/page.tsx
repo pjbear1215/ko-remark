@@ -25,6 +25,7 @@ export default function InstallPage() {
   const [currentStep, setCurrentStep] = useState("");
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [lockPasswordDisabled, setLockPasswordDisabled] = useState(false);
+  const [koremarkUninstalled, setKoremarkUninstalled] = useState(false);
   const [btSelected, setBtSelected] = useState(state.installBtKeyboard || state.installHangul);
   const [swapCaps, setSwapCaps] = useState(state.swapLeftCtrlCapsLock);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -153,13 +154,13 @@ export default function InstallPage() {
           >
             설치 준비
           </h1>
-          <div className="mt-3 flex items-center gap-2">
+        </div>
+        <div className="mt-3 flex items-center gap-2">
             <span className="text-[18px]">💡</span>
             <p className="text-[15px] font-medium" style={{ color: "#666666" }}>
               <strong>Shift + Space</strong> 또는 <strong>오른쪽 Alt</strong>로 언어를 전환할 수 있습니다.
             </p>
           </div>
-        </div>
 
         <div className="stagger-1">
           <div className="operator-card operator-card-strong" style={{ padding: "16px 20px", border: "1.5px solid #000000" }}>
@@ -233,7 +234,7 @@ export default function InstallPage() {
                         checked={developerModeEnabled}
                         onChange={setDeveloperModeEnabled}
                         label="개발자 모드 활성화 확인"
-                        description="Settings > General > Help > Copyrights > GPL > Developer Mode"
+                        description="Settings > General settings > Software > Advanced > Developer mode (Enabled)"
                       />
                       <Checkbox
                         checked={lockPasswordDisabled}
@@ -241,12 +242,18 @@ export default function InstallPage() {
                         label="잠금 비밀번호 해제 확인"
                         description="Settings > Security > Passcode (설치 중에는 꺼두어야 합니다)"
                       />
+                      <Checkbox
+                        checked={koremarkUninstalled}
+                        onChange={setKoremarkUninstalled}
+                        label="기존 ko-remark 삭제 확인"
+                        description="기존 ko-remark (by bncedgb-glitch) 프로젝트의 원상복구 또는 팩토리 리셋을 수행했음을 확인합니다."
+                      />
                     </div>
                   </div>
 
                   <Button
                     onClick={startInstall}
-                    disabled={!developerModeEnabled || !lockPasswordDisabled}
+                    disabled={!developerModeEnabled || !lockPasswordDisabled || !koremarkUninstalled}
                     size="lg"
                     className="w-full font-bold"
                   >

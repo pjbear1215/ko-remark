@@ -187,65 +187,103 @@ export default function EntryPage() {
         </div>
 
         {isInstallAction && (
-          <div className="space-y-4 stagger-2">
+          <div className="space-y-6 stagger-2">
+            {/* 시스템 안내 카드 */}
             <div
-              className="rounded-none"
+              className="rounded-none border-l-4 border-black"
               style={{
-                backgroundColor: "#f6f6f6",
-                padding: "20px 24px",
-                borderLeft: "4px solid #000000",
+                backgroundColor: "#f9f9f9",
+                padding: "24px",
                 borderTop: "1.5px solid #000000",
                 borderRight: "1.5px solid #000000",
                 borderBottom: "1.5px solid #000000",
               }}
             >
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-6">
                 <span className="text-[18px]">⚠️</span>
-                <p className="text-[16px] font-bold" style={{ color: "#000000" }}>
+                <p className="text-[18px] font-bold" style={{ color: "#000000" }}>
                   설치 전 확인
                 </p>
               </div>
-              <ul className="space-y-2 text-[15px]" style={{ color: "#333333" }}>
-                <li className="flex items-start gap-3">
-                  <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                  <span className="font-medium">
-                    설치되는 모든 구성 요소는 <strong>시스템 바이너리(xochitl) 및 라이브러리(libepaper.so 등) 파일을 수정하지 않습니다.</strong>
-                  </span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                  <span className="font-medium">
-                    한글 입력 엔진은 <strong>입력 신호를 가로채 메모리 상에서 한글 조합을 생성</strong>하고, 확정된 조합을 <strong>키 맵핑 변경을 통해 출력</strong>합니다.
-                  </span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                  <span className="font-medium">
-                    키 맵핑 과정에서 <strong>tmpfs mount를 활용</strong>하여 원본 경로에 <strong>임시로 덮어씌우는 방식</strong>을 사용하므로, 원본 파일을 직접 수정하지 않으며 맵핑 정보가 영구적으로 저장되지 않아 안전합니다.
-                  </span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                  <span className="font-medium">
-                    한글 입력 엔진은 <strong>Type Folio와 일부 블루투스 키보드</strong>에서만 검증되었습니다.
-                  </span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                  <span className="font-medium">
-                    Type Folio만 사용하는 경우에는 <strong>한글 입력 엔진만 설치</strong>해도 충분합니다.
-                  </span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                  <span className="font-medium">기존 설치 상태가 남아 있다면 원상복구 후 다시 진행하세요.</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <span className="mt-2 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                  <span className="font-medium">전체 원상복구 기능으로 원본 상태로 되돌릴 수 있습니다.</span>
-                </li>
-              </ul>
+              
+              <div className="space-y-6 text-[14.5px] leading-relaxed" style={{ color: "#333333" }}>
+                {/* 1. 시스템 안전성 및 보증 */}
+                <div>
+                  <p className="font-bold text-[15px] mb-2">1. 시스템 안전성 및 보증</p>
+                  <ul className="space-y-1.5 ml-1">
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>바이너리 변조 없음:</strong> 설치되는 모든 구성 요소는 기기의 핵심 실행 파일(xochitl) 및 시스템 라이브러리(libepaper.so 등)를 직접 수정하지 않습니다.</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>휘발성 맵핑 방식:</strong> 시스템 라이브러리 교체 시 tmpfs mount(메모리 오버레이) 방식을 사용합니다. 원본 파일은 그대로 보존되며, 수정된 정보는 메모리 상에만 임시로 존재하므로 시스템의 영구적인 변조가 없어 안전합니다.</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* 2. 한글 입력 엔진의 원리 */}
+                <div>
+                  <p className="font-bold text-[15px] mb-2">2. 한글 입력 엔진의 원리</p>
+                  <ul className="space-y-1.5 ml-1">
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span>입력 신호를 중간에서 가로채 메모리 상에서 실시간으로 한글 자모를 조합합니다. 확정된 글자는 키 맵핑 정보를 일시적으로 변경하여 시스템에 전달하는 방식을 사용합니다.</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* 3. 블루투스 도우미 (Smart Bluetooth) */}
+                <div>
+                  <p className="font-bold text-[15px] mb-2">3. 블루투스 도우미 (Smart Bluetooth)</p>
+                  <ul className="space-y-1.5 ml-1">
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>페어링 및 재연결 최적화:</strong> 저전력 블루투스(BLE) 키보드의 페어링을 통합 관리하고, 기기 재부팅이나 절전 모드 해제 시 자동으로 재연결되도록 돕습니다.</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>전원 제어:</strong> 효율적인 배터리 관리를 위해 웹 UI에서 블루투스 전원을 직접 제어할 수 있는 기능을 제공합니다.</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* 4. 기기 호환성 및 권장 설치 */}
+                <div>
+                  <p className="font-bold text-[15px] mb-2">4. 기기 호환성 및 권장 설치</p>
+                  <ul className="space-y-1.5 ml-1">
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>검증된 환경:</strong> 공식 Type Folio와 대부분의 최신 블루투스 LE 키보드에서 검증되었습니다. (Classic 전용 구형 키보드 미지원)</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>권장 옵션:</strong> Type Folio만 사용하신다면 '한글 입력 엔진'만 설치해도 충분합니다. 외장 키보드를 함께 사용하신다면 '블루투스 도우미'를 포함하여 설치하는 것을 권장합니다.</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* 5. 사전 준비 및 복구 */}
+                <div>
+                  <p className="font-bold text-[15px] mb-2">5. 사전 준비 및 복구</p>
+                  <ul className="space-y-1.5 ml-1">
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>기존 흔적 제거:</strong> 기존 <strong>ko-remark</strong> (by bncedgb-glitch) 프로젝트가 설치되어 있다면, <strong>해당 프로젝트의 원상복구 기능</strong>으로 초기화를 먼저 진행해야 합니다. (또는 기기의 팩토리 리셋 수행)</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>재설치 및 복구:</strong> rekoit 사용 중에는 원상복구 없이도 언제든 다시 설치하여 설정을 갱신하거나 손상된 환경을 복구할 수 있습니다.</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span><strong>완벽한 순정 상태 복구:</strong> '전체 원상복구' 기능을 통해 언제든지 설치 전의 순정 상태로 되돌릴 수 있습니다.</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
             </div>
+
             <Checkbox
               checked={eulaChecked}
               onChange={setEulaChecked}

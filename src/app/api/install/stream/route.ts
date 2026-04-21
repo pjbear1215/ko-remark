@@ -584,14 +584,6 @@ if [ -n "$INACTIVE" ]; then
 fi
 
 echo "[7/7] 서비스 재시작..."
-rm -f /home/root/.rekoit-restore-login.sh 2>/dev/null || true
-if [ -f /home/root/.profile ]; then
-    sed -i '\\|/home/root/.rekoit-restore-login.sh|d' /home/root/.profile 2>/dev/null || true
-fi
-if [ -f /home/root/.bashrc ]; then
-    sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-    sed -i '/# REKOIT auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true
-fi
 rm -rf /home/root/rekoit 2>/dev/null || true
 systemctl daemon-reload
 systemctl restart xochitl 2>/dev/null || true
@@ -722,7 +714,7 @@ export async function GET(request: NextRequest): Promise<Response> {
               await runSsh(
                 ip,
                 password,
-                "systemctl stop hangul-daemon.service 2>/dev/null || true; systemctl stop rekoit-restore.service 2>/dev/null || true; rm -f /home/root/.rekoit-restore-login.sh; if [ -f /home/root/.profile ]; then sed -i '\\|/home/root/.rekoit-restore-login.sh|d' /home/root/.profile 2>/dev/null || true; fi; if [ -f /home/root/.bashrc ]; then sed -i '/# Hangul auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true; sed -i '/# REKOIT auto-restore: 펌웨어 업데이트 후 자동 복구/,/^fi$/d' /home/root/.bashrc 2>/dev/null || true; fi",
+                "systemctl stop hangul-daemon.service 2>/dev/null || true; systemctl stop rekoit-restore.service 2>/dev/null || true;",
               );
               send("log", { line: "OK: 기존 서비스 중지 및 로그인 restore 정리 완료" });
             } catch {
