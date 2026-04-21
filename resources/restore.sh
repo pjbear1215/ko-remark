@@ -78,8 +78,10 @@ if [ -f "$LIBEPAPER" ] && [ -f "$LIBEPAPER_BACKUP" ]; then
     CURRENT_MD5=$(md5sum "$LIBEPAPER" | cut -d' ' -f1)
     BACKUP_MD5=$(md5sum "$LIBEPAPER_BACKUP" | cut -d' ' -f1)
     if [ "$CURRENT_MD5" != "$BACKUP_MD5" ]; then
-        cp "$LIBEPAPER" "$LIBEPAPER_NEW_BACKUP"
-        echo "[RESTORE] 펌웨어 업데이트 감지: libepaper.so 새 원본 백업 완료"
+        # 펌웨어 업데이트 감지됨: 기존 백업을 최신으로 교체
+        mv "$LIBEPAPER_BACKUP" "$BASEDIR/backup/libepaper.so.old-$(date +%Y%m%d)" 2>/dev/null || true
+        cp "$LIBEPAPER" "$LIBEPAPER_BACKUP"
+        echo "[RESTORE] 펌웨어 업데이트 감지: libepaper.so 백업을 최신 버전으로 갱신 완료"
     fi
 fi
 

@@ -23,7 +23,7 @@ interface SetupContextType {
   isLoaded: boolean;
 }
 
-const CIPHER_KEY = "ko-remark-v1";
+const CIPHER_KEY = "rekoit-v1";
 const LEGACY_CIPHER_KEYS = ["remarkable-hangul-setup-v1"];
 
 function encryptValue(text: string): string {

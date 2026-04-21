@@ -9,7 +9,7 @@ interface SshSession extends SshCredentials {
   expiresAt: number;
 }
 
-export const SSH_SESSION_COOKIE = "ko-remark-ssh";
+export const SSH_SESSION_COOKIE = "rekoit-ssh";
 const SSH_SESSION_TTL_MS = 5 * 60 * 1000;
 
 export function shouldUseSecureSessionCookie(hostname: string): boolean {

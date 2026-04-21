@@ -14,7 +14,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     systemctl stop rekoit-bt-wake-reconnect.service 2>/dev/null || true
     killall -9 bluetoothctl 2>/dev/null || true
     touch /tmp/rekoit-setup-active
-    touch /tmp/ko-remark-pair-SCAN.sh
+    touch /tmp/rekoit-pair-SCAN.sh
     
     # 2. 하드웨어 리셋
     modprobe btnxpuart 2>/dev/null || true

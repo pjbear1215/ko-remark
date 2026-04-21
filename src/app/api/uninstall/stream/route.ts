@@ -337,14 +337,8 @@ export async function GET(request: NextRequest): Promise<Response> {
           fi
           echo "DIRECT_MOUNT_OK"
 
-          # === libepaper.so 원본 복원 (direct mount 경유) ===
-          ${detected.hasLibepaperBackup ? `
-          if [ -f "/home/root/rekoit/backup/libepaper.so.original" ]; then
-            cp "/home/root/rekoit/backup/libepaper.so.original" /mnt/direct_rootfs/usr/lib/plugins/platforms/libepaper.so 2>/dev/null || true
-            echo "LIBEPAPER_RESTORED"
-          fi
-          ` : ""}
-
+          # === libepaper.so 원본 복원 (마운트 해제만으로 충분) ===
+          echo "LIBEPAPER_RESTORED_BY_UMOUNT"
           # === /etc 파일 삭제 (overlay 우회) ===
           rm -f /mnt/direct_rootfs/etc/systemd/system/hangul-daemon.service
           rm -f /mnt/direct_rootfs/etc/systemd/system/rekoit-restore.service

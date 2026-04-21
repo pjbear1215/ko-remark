@@ -496,12 +496,9 @@ sed -i 's|^##*ConditionPathIsDirectory=/sys/class/bluetooth|ConditionPathIsDirec
 sed -i '/^Privacy = off$/d' /etc/bluetooth/main.conf 2>/dev/null || true
 sed -i '/^FastConnectable = true$/d' /etc/bluetooth/main.conf 2>/dev/null || true
 
-echo "[3/7] libepaper 원복..."
+echo "[3/7] libepaper 원복 (마운트 해제만으로 충분)..."
 unmount_libepaper_mounts || true
 rm -f "$LIBEPAPER_TMPFS"
-if [ -f "/home/root/rekoit/backup/libepaper.so.original" ]; then
-    cp "/home/root/rekoit/backup/libepaper.so.original" "$LIBEPAPER"
-fi
 
 echo "[4/7] 폰트 및 rootfs 보조 파일 제거..."
 rm -f /usr/share/fonts/ttf/noto/NotoSansCJKkr-Regular.otf

@@ -7,7 +7,7 @@ import path from "path";
 import { shouldRebuildArtifact } from "./buildArtifacts.js";
 
 test("shouldRebuildArtifact returns true when output is missing", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ko-remark-build-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rekoit-build-"));
   const source = path.join(dir, "source.c");
   fs.writeFileSync(source, "int main(void){return 0;}");
 
@@ -18,7 +18,7 @@ test("shouldRebuildArtifact returns true when output is missing", () => {
 });
 
 test("shouldRebuildArtifact returns true when source is newer than output", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ko-remark-build-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rekoit-build-"));
   const source = path.join(dir, "source.c");
   const output = path.join(dir, "artifact.so");
   fs.writeFileSync(output, "old");
@@ -29,7 +29,7 @@ test("shouldRebuildArtifact returns true when source is newer than output", asyn
 });
 
 test("shouldRebuildArtifact returns false when output is newer than all sources", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ko-remark-build-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rekoit-build-"));
   const source = path.join(dir, "source.c");
   const output = path.join(dir, "artifact.so");
   fs.writeFileSync(source, "old");
@@ -40,7 +40,7 @@ test("shouldRebuildArtifact returns false when output is newer than all sources"
 });
 
 test("shouldRebuildArtifact returns true when any source is missing", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ko-remark-build-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rekoit-build-"));
   const output = path.join(dir, "artifact.so");
   fs.writeFileSync(output, "built");
 

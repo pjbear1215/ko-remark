@@ -199,8 +199,8 @@ export async function GET(request: NextRequest): Promise<Response> {
         let resolvedAddress = address;
 
         const pairScript = buildBluetoothPairSessionScript({ address, name, scanTimeout });
-        const localScriptPath = path.join(os.tmpdir(), `ko-remark-pair-${Date.now()}.sh`);
-        const remoteScriptPath = `/tmp/ko-remark-pair-${Date.now()}.sh`;
+        const localScriptPath = path.join(os.tmpdir(), `rekoit-pair-${Date.now()}.sh`);
+        const remoteScriptPath = `/tmp/rekoit-pair-${Date.now()}.sh`;
         await fs.writeFile(localScriptPath, pairScript, "utf8");
 
         await new Promise<void>((resolve, reject) => {
@@ -575,7 +575,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       closed = true;
       // 페어링 프로세스 종료 시 센티넬 파일 삭제 및 서비스 시작 보장
       const cleanupCmd = `
-        rm -f /tmp/rekoit-setup-active /tmp/ko-remark-pair-*.sh
+        rm -f /tmp/rekoit-setup-active /tmp/rekoit-pair-*.sh
         ${buildBluetoothCleanupScript()}
         systemctl start rekoit-bt-wake-reconnect.service 2>/dev/null || true
       `;

@@ -16,7 +16,7 @@ log_line() {
 }
 
 is_setup_active() {
-    if [ -f "$SENTINEL" ] || [ -f /tmp/ko-remark-pair-SCAN.sh ] || [ -f /tmp/ko-remark-pair-*.sh ]; then
+    if [ -f "$SENTINEL" ] || [ -f /tmp/rekoit-pair-SCAN.sh ] || [ -f /tmp/rekoit-pair-*.sh ]; then
         return 0
     fi
     return 1

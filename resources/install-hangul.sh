@@ -32,13 +32,22 @@ install_hangul_runtime() {
 }
 
 backup_and_mount_libepaper() {
-    echo "[8/10] Backing up libepaper.so..."
+    echo "[8/10] Syncing libepaper.so backup..."
     if [ -f "$LIBEPAPER" ]; then
         if [ ! -f "$LIBEPAPER_BACKUP" ]; then
             cp "$LIBEPAPER" "$LIBEPAPER_BACKUP"
             echo "  OK: Initial backup created"
         else
-            echo "  OK: Backup already exists"
+            # 펌웨어 업데이트 감지 (MD5 비교)
+            CURRENT_MD5=$(md5sum "$LIBEPAPER" | cut -d' ' -f1)
+            BACKUP_MD5=$(md5sum "$LIBEPAPER_BACKUP" | cut -d' ' -f1)
+            if [ "$CURRENT_MD5" != "$BACKUP_MD5" ]; then
+                mv "$LIBEPAPER_BACKUP" "$BASEDIR/backup/libepaper.so.old-$(date +%Y%m%d)" 2>/dev/null || true
+                cp "$LIBEPAPER" "$LIBEPAPER_BACKUP"
+                echo "  OK: Backup updated for new firmware"
+            else
+                echo "  OK: Backup is up-to-date"
+            fi
         fi
     fi
     if [ -f "$LIBEPAPER_BACKUP" ] || [ -f "$LIBEPAPER" ]; then

@@ -254,12 +254,8 @@ async function removeHangul(ip: string, password: string, otherStillInstalled: b
       umount -l "$TARGET" 2>/dev/null || umount "$TARGET" 2>/dev/null || break
       sleep 0.5
     done
+    // libepaper 원본 복원 (마운트 해제만으로 충분)
     rm -f "$LIBEPAPER_TMPFS"
-
-    # libepaper 원본 복원
-    if [ -f /home/root/rekoit/backup/libepaper.so.original ]; then
-      cp /home/root/rekoit/backup/libepaper.so.original /usr/lib/plugins/platforms/libepaper.so 2>/dev/null || true
-    fi
 
     # 서비스 파일 제거
     rm -f /etc/systemd/system/hangul-daemon.service

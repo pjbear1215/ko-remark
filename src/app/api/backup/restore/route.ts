@@ -115,7 +115,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const tmpDir = path.join(os.tmpdir(), "ko-remark-restore");
+  const tmpDir = path.join(os.tmpdir(), "rekoit-restore");
   fs.mkdirSync(tmpDir, { recursive: true });
   const tmpFile = path.join(tmpDir, "backup.tar.gz");
 
